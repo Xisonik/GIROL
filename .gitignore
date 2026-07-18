@@ -28,3 +28,7 @@ __pycache__/
 # NVIDIA streaming traces
 *.etli
 ${data}/
+
+# Asset archives
+/source/isaaclab_assets/*.zip
+/source/isaaclab_assets/**/*.zip
