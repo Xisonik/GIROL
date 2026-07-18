@@ -1,0 +1,30 @@
+.idea
+source/isaaclab_assets/data/aloha_assets
+source/isaaclab/isaaclab/envs/__pycache__
+models/__pycache__
+logs
+runs
+outputs
+.aws
+.dockerignore
+.flake8
+.gitattributes
+.github/
+.pre-commit-config.yaml
+.pretrained_checkpoints/
+# Python cache
+source/isaaclab_tasks/isaaclab_tasks/direct/aloha/__pycache__/
+source/isaaclab_tasks/isaaclab_tasks/direct/aloha/__pycache__/
+orientation_supervised_checkpoints/
+__pycache__/
+*.__pycache__/
+*.py[cod]
+*.usd
+*$py.class
+*.so
+.Python
+*.pth
+*.ckpt
+# NVIDIA streaming traces
+*.etli
+${data}/

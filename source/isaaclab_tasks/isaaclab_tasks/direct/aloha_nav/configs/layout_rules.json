@@ -1,0 +1,212 @@
+{
+  "room_layout": {
+    "room_numbering": [
+      [
+        1,
+        2
+      ],
+      [
+        3,
+        4
+      ]
+    ],
+    "active_rooms": [
+      1,
+      2
+    ],
+    "outer_size": 20.0,
+    "subroom_size": 10.0,
+    "room_centers": [
+      [
+        -5.0,
+        5.0,
+        0.0
+      ],
+      [
+        5.0,
+        5.0,
+        0.0
+      ],
+      [
+        -5.0,
+        -5.0,
+        0.0
+      ],
+      [
+        5.0,
+        -5.0,
+        0.0
+      ]
+    ],
+    "inner_wall_clearance": 1.0,
+    "allow_inner_corner_cells": true,
+    "passage_center": 3.0,
+    "passage_width": 1.0
+  },
+  "goal_mode": "selected_only",
+  "_goal_mode_help": {
+    "selected_only": "Only the randomly selected navigation goal is placed.",
+    "all_candidates": "Every assigned block places a candidate goal; one is selected. scene_items counts must be sufficient."
+  },
+  "grids": {
+    "staff_grid": {
+      "coordinates": [
+        [-3.8,  3.8, 0.0],
+        [-2,  3.8, 0.0],
+        [ 2,  3.8, 0.0],
+        [ 3.8,  3.8, 0.0],
+
+        [-3.8, -3.8, 0.0],
+        [-2, -3.8, 0.0],
+        [ 2, -3.8, 0.0],
+        [ 3.8, -3.8, 0.0],
+
+        [-3.8, -2, 0.0],
+        [-3.8,  2, 0.0],
+
+        [ 3.8, -2, 0.0],
+        [ 3.8,  2, 0.0]
+      ]
+    },
+    "goals_grid": {
+      "coordinates": [
+        [
+          4,
+          0,
+          0.0
+        ],
+        [
+          -4,
+          0,
+          0.0
+        ]
+      ]
+    },
+    "center_obstacle_grid": {
+      "coordinates": [
+        [
+          -1.5,
+          -0.5,
+          0.0
+        ],
+        [
+          1.5,
+          -0.5,
+          0.0
+        ],
+        [
+          -1.5,
+          0.5,
+          0.0
+        ],
+        [
+          1.5,
+          0.5,
+          0.0
+        ]
+      ]
+    }
+  },
+  "semantic_blocks": {
+    "office": {
+      "staff": {
+        "grid": "staff_grid",
+        "objects": [
+          "oven",
+          "clock",
+          "chair_2",
+          "vase",
+          "TrashCan",
+          "Crestwood_Chair"
+        ]
+      },
+      "goal": {
+        "grid": "goals_grid",
+        "object": "teddy",
+        "surface_providers": [
+          {
+            "object": "table_2",
+            "count": 1
+          }
+        ]
+      },
+      "obstacles": [
+        {
+          "grid": "center_obstacle_grid",
+          "object": "chair_3",
+          "min_count": 0,
+          "max_count": 4
+        }
+      ]
+    },
+    "utility": {
+      "staff": {
+        "grid": "staff_grid",
+        "objects": [
+          "cabinet",
+          "lamp",
+          "desk",
+          "Standard_HalfUnit",
+          "Yucca_Cane",
+          "box"
+        ]
+      },
+      "goal": {
+        "grid": "goals_grid",
+        "object": "teddy",
+        "surface_providers": [
+          {
+            "object": "table_2",
+            "count": 1
+          }
+        ]
+      },
+      "obstacles": [
+        {
+          "grid": "center_obstacle_grid",
+          "object": "ladder",
+          "min_count": 0,
+          "max_count": 1
+        }
+      ]
+    }
+  },
+  "placement": {
+    "collision_margin": 0.05,
+    "_coordinates_help": "Passage centers use the common 20x20 env-local XY frame. Object footprint radius is added to each configured radius.",
+    "passage_exclusion_zones": [
+      {
+        "name": "passage_1_2",
+        "center": [
+          0.0,
+          3.0
+        ],
+        "radius": 1.0
+      },
+      {
+        "name": "passage_3_4",
+        "center": [
+          0.0,
+          -3.0
+        ],
+        "radius": 1.0
+      },
+      {
+        "name": "passage_1_3",
+        "center": [
+          -3.0,
+          0.0
+        ],
+        "radius": 1.0
+      },
+      {
+        "name": "passage_2_4",
+        "center": [
+          3.0,
+          0.0
+        ],
+        "radius": 1.0
+      }
+    ]
+  }
+}

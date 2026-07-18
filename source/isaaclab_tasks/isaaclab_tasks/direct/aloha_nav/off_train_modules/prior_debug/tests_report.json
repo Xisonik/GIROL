@@ -1,0 +1,187 @@
+{
+  "num_pass": 28,
+  "num_warn": 2,
+  "num_fail": 0,
+  "tests": [
+    {
+      "name": "schema_has_K",
+      "status": "PASS",
+      "fatal": false,
+      "details": ""
+    },
+    {
+      "name": "schema_has_node_features",
+      "status": "PASS",
+      "fatal": false,
+      "details": ""
+    },
+    {
+      "name": "schema_has_adjacency",
+      "status": "PASS",
+      "fatal": false,
+      "details": ""
+    },
+    {
+      "name": "schema_has_zone_centers_xy",
+      "status": "PASS",
+      "fatal": false,
+      "details": ""
+    },
+    {
+      "name": "schema_has_grid_xy",
+      "status": "PASS",
+      "fatal": false,
+      "details": ""
+    },
+    {
+      "name": "schema_has_grid_to_zone",
+      "status": "PASS",
+      "fatal": false,
+      "details": ""
+    },
+    {
+      "name": "schema_has_builder_config",
+      "status": "PASS",
+      "fatal": false,
+      "details": ""
+    },
+    {
+      "name": "schema_has_object_vocab",
+      "status": "PASS",
+      "fatal": false,
+      "details": "V=16"
+    },
+    {
+      "name": "schema_has_object_probs",
+      "status": "PASS",
+      "fatal": false,
+      "details": "shape=(5, 16)"
+    },
+    {
+      "name": "K_positive",
+      "status": "PASS",
+      "fatal": false,
+      "details": "K=5"
+    },
+    {
+      "name": "node_features_shape",
+      "status": "PASS",
+      "fatal": false,
+      "details": "shape=(5, 16)"
+    },
+    {
+      "name": "adjacency_shape",
+      "status": "PASS",
+      "fatal": false,
+      "details": "shape=(5, 5)"
+    },
+    {
+      "name": "zone_centers_shape",
+      "status": "PASS",
+      "fatal": false,
+      "details": "shape=(5, 2)"
+    },
+    {
+      "name": "grid_xy_shape",
+      "status": "PASS",
+      "fatal": false,
+      "details": "shape=(209, 2)"
+    },
+    {
+      "name": "grid_to_zone_shape",
+      "status": "PASS",
+      "fatal": false,
+      "details": "shape=(209,)"
+    },
+    {
+      "name": "object_probs_shape",
+      "status": "PASS",
+      "fatal": false,
+      "details": "shape=(5, 16)"
+    },
+    {
+      "name": "adjacency_range",
+      "status": "PASS",
+      "fatal": false,
+      "details": "min=0.0000, max=0.3708"
+    },
+    {
+      "name": "adjacency_diagonal_zero",
+      "status": "PASS",
+      "fatal": false,
+      "details": ""
+    },
+    {
+      "name": "adjacency_symmetry",
+      "status": "WARN",
+      "fatal": false,
+      "details": "max_asym=0.127525; acceptable for row-normalized transition probabilities"
+    },
+    {
+      "name": "grid_to_zone_range",
+      "status": "PASS",
+      "fatal": false,
+      "details": ""
+    },
+    {
+      "name": "each_zone_has_grid_cells",
+      "status": "PASS",
+      "fatal": false,
+      "details": "counts=[38, 45, 44, 42, 40]"
+    },
+    {
+      "name": "graph_not_empty",
+      "status": "PASS",
+      "fatal": false,
+      "details": "edge_mass=5.0000"
+    },
+    {
+      "name": "graph_not_complete",
+      "status": "WARN",
+      "fatal": false,
+      "details": "Every directed off-diagonal edge is positive; adjacency may be too dense"
+    },
+    {
+      "name": "object_probs_range",
+      "status": "PASS",
+      "fatal": false,
+      "details": "min=0.0070, max=0.1479"
+    },
+    {
+      "name": "semantic_signal_per_zone",
+      "status": "PASS",
+      "fatal": false,
+      "details": "max_per_zone=[0.1421, 0.0935, 0.1129, 0.0921, 0.1479]"
+    },
+    {
+      "name": "optional_node_features_std",
+      "status": "PASS",
+      "fatal": false,
+      "details": "shape=(5, 16)"
+    },
+    {
+      "name": "optional_zone_object_probs_std",
+      "status": "PASS",
+      "fatal": false,
+      "details": "shape=(5, 16)"
+    },
+    {
+      "name": "optional_node_object_probs_std",
+      "status": "PASS",
+      "fatal": false,
+      "details": "shape=(5, 16)"
+    },
+    {
+      "name": "optional_zone_centers_xy_std",
+      "status": "PASS",
+      "fatal": false,
+      "details": "shape=(5, 2)"
+    },
+    {
+      "name": "optional_adjacency_std",
+      "status": "PASS",
+      "fatal": false,
+      "details": "shape=(5, 5)"
+    }
+  ]
+}

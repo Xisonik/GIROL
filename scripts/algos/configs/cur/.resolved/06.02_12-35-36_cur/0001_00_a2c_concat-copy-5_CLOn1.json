@@ -1,0 +1,158 @@
+{
+  "run": {
+    "name": "ppo_concat_lstm",
+    "algo": "ppo",
+    "task_name": "Aloha_nav",
+    "seed": 42,
+    "num_envs": 64,
+    "timesteps": 150000,
+    "headless": true,
+    "video": false,
+    "eval": false,
+    "folder": "06.02_12-35-36_cur",
+    "write_interval": 10,
+    "checkpoint_interval": 1000
+  },
+  "agent": {
+    "rollouts": 128,
+    "learning_epochs": 8,
+    "mini_batches": 8,
+    "learning_rate": 0.0003,
+    "gamma": 0.96,
+    "gae_lambda": 0.92,
+    "grad_norm_clip": 1.0,
+    "ratio_clip": 0.2,
+    "value_clip": 0.2,
+    "entropy_loss_scale": 0.001,
+    "value_loss_scale": 2.5,
+    "kl_threshold": 0.0,
+    "random_timesteps": 0,
+    "learning_starts": 0,
+    "normalize_img": true
+  },
+  "model": {
+    "recurrent": {
+      "enabled": true,
+      "sequence_length": 16
+    },
+    "features": {
+      "use_img": true,
+      "use_memory": false,
+      "use_goal": true,
+      "use_gt_orientation": true,
+      "use_graph": true,
+      "graph_ref": "graph_encoder",
+      "graph_dim": 128,
+      "use_orientation_module": false,
+      "orientation_ref": "orientation_module",
+      "orientation_dim": 1,
+      "gt_orientation_step_end": 4000,
+      "noise_orientation_steps_start_step": 150000
+    },
+    "modules": {
+      "graph_encoder": {
+        "class_path": "perception.graph_encoder.GraphEncoder",
+        "kwargs": {
+          "embeddings_path": {
+            "cfg": "paths.text_embeddings"
+          },
+          "graphs_dir": {
+            "cfg": "paths.graphs_dir"
+          },
+          "out_dim": 128,
+          "dropout": 0.1
+        },
+        "eval": true
+      },
+      "orientation_module": {
+        "class_path": "perception.orientation_module.OrientationFeature",
+        "kwargs": {
+          "mode": "pred",
+          "img_dim": {
+            "obs_dim": "img"
+          },
+          "graph_emb_dim": 128,
+          "force_predictor": true,
+          "log_metrics": false
+        },
+        "eval": true
+      }
+    },
+    "critic_hidden_dims_from_actor": false,
+    "critic_branch_kwargs_from_actor": false,
+    "actor": {
+      "class_path": "models.a2c_models_lstm.make_a2c_nav_lstm_actor",
+      "kwargs": {
+        "hidden_dims": [
+          256
+        ],
+        "lstm_hidden_size": 32,
+        "lstm_num_layers": 1,
+        "sequence_length": 16
+      }
+    },
+    "critic": {
+      "class_path": "models.a2c_models_lstm.A2CNavLSTMValue",
+      "kwargs": {
+        "hidden_dims": [
+          256
+        ],
+        "lstm_hidden_size": 32,
+        "lstm_num_layers": 1,
+        "sequence_length": 16
+      }
+    }
+  },
+  "aux": {
+    "enabled": true,
+    "class_path": "perception.aux_trainer.OrientationAuxTrainer",
+    "kwargs": {
+      "graph_ref": "graph_encoder",
+      "orientation_ref": "orientation_module",
+      "lr_graph": 3e-05,
+      "lr_orient": 3e-05,
+      "batch_size": 256,
+      "train_steps_per_call": 1,
+      "log_interval": 50,
+      "grad_norm_clip": 1.0,
+      "save_interval": {
+        "cfg": "aux.save_interval"
+      },
+      "save_optimizer": {
+        "cfg": "aux.save_optimizer"
+      }
+    },
+    "save_interval": 1000,
+    "save_optimizer": true,
+    "log_env_metrics": true
+  },
+  "env": {
+    "task": "hab_nav",
+    "turn_task": false,
+    "action_angle_deg": 20,
+    "camera": true,
+    "memory": true,
+    "controller": false,
+    "curriculum": false,
+    "CL_ON": true
+  },
+  "paths": {
+    "text_embeddings": "source/isaaclab_tasks/isaaclab_tasks/direct/aloha_nav/text_embeddings.pt",
+    "graphs_dir": "/home/xiso/IsaacLab/eval_scenes_new_sgg2",
+    "log_root": "logs/skrl",
+    "aux_checkpoint": null,
+    "agent_checkpoint": null,
+    "state_preprocessor_checkpoint": null
+  },
+  "meta": {
+    "base_config": "/home/xiso/IsaacLab/scripts/algos/configs/cur/base.json",
+    "experiment_config": "/home/xiso/IsaacLab/scripts/algos/configs/cur/00_a2c_concat copy 5.json",
+    "experiment": "00_a2c_concat copy 5",
+    "experiment_grid_id": 1,
+    "sweep": {
+      "env.CL_ON": true
+    },
+    "config_index": 1,
+    "config_total": 2
+  }
+}

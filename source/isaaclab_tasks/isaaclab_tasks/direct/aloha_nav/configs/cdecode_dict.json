@@ -1,0 +1,146 @@
+{
+  "names": {
+    "box": 0,
+    "cabinet": 1,
+    "chair": 2,
+    "clock": 3,
+    "crestwood": 4,
+    "desk": 5,
+    "ladder": 6,
+    "lamp": 7,
+    "oven": 8,
+    "standard": 9,
+    "table": 10,
+    "teddy": 11,
+    "trashcan": 12,
+    "vase": 13,
+    "yucca": 14
+  },
+  "colors": {
+    "black": 0,
+    "brown": 1,
+    "gray": 2,
+    "green": 3,
+    "orange": 4,
+    "red": 5,
+    "white": 6,
+    "yellow": 7
+  },
+  "objects": {
+    "1": {
+      "name": "table",
+      "color": "green",
+      "raw_name": "table_2"
+    },
+    "2": {
+      "name": "box",
+      "color": "yellow",
+      "raw_name": "box"
+    },
+    "3": {
+      "name": "oven",
+      "color": "yellow",
+      "raw_name": "oven"
+    },
+    "4": {
+      "name": "desk",
+      "color": "gray",
+      "raw_name": "desk"
+    },
+    "5": {
+      "name": "chair",
+      "color": "orange",
+      "raw_name": "chair_2"
+    },
+    "6": {
+      "name": "chair",
+      "color": "red",
+      "raw_name": "chair_3"
+    },
+    "7": {
+      "name": "cabinet",
+      "color": "brown",
+      "raw_name": "cabinet"
+    },
+    "8": {
+      "name": "trashcan",
+      "color": "black",
+      "raw_name": "TrashCan"
+    },
+    "9": {
+      "name": "vase",
+      "color": "yellow",
+      "raw_name": "vase"
+    },
+    "10": {
+      "name": "clock",
+      "color": "brown",
+      "raw_name": "clock"
+    },
+    "11": {
+      "name": "crestwood",
+      "color": "red",
+      "raw_name": "Crestwood_Chair"
+    },
+    "12": {
+      "name": "ladder",
+      "color": "yellow",
+      "raw_name": "ladder"
+    },
+    "13": {
+      "name": "lamp",
+      "color": "white",
+      "raw_name": "lamp"
+    },
+    "14": {
+      "name": "standard",
+      "color": "white",
+      "raw_name": "Standard_HalfUnit"
+    },
+    "15": {
+      "name": "yucca",
+      "color": "green",
+      "raw_name": "Yucca_Cane"
+    },
+    "16": {
+      "name": "teddy",
+      "color": "yellow",
+      "raw_name": "teddy"
+    }
+  },
+  "class_color_to_id": {
+    "table|green": 1,
+    "box|yellow": 2,
+    "oven|yellow": 3,
+    "desk|gray": 4,
+    "chair|orange": 5,
+    "chair|red": 6,
+    "cabinet|brown": 7,
+    "trashcan|black": 8,
+    "vase|yellow": 9,
+    "clock|brown": 10,
+    "crestwood|red": 11,
+    "ladder|yellow": 12,
+    "lamp|white": 13,
+    "standard|white": 14,
+    "yucca|green": 15,
+    "teddy|yellow": 16
+  },
+  "name_to_default_id": {
+    "table": 1,
+    "box": 2,
+    "oven": 3,
+    "desk": 4,
+    "chair": 5,
+    "cabinet": 7,
+    "trashcan": 8,
+    "vase": 9,
+    "clock": 10,
+    "crestwood": 11,
+    "ladder": 12,
+    "lamp": 13,
+    "standard": 14,
+    "yucca": 15,
+    "teddy": 16
+  }
+}

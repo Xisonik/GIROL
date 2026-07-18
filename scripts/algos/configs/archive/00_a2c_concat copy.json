@@ -1,0 +1,51 @@
+{
+  "run": {
+    "algo": "a2c",
+    "name": "a2c_concat_non_lstm",
+    "timesteps": 15000
+  },
+  "agent": {
+    "rollouts": 128,
+    "mini_batches": 32,
+    "learning_rate": 0.0003,
+    "gamma": 0.96,
+    "gae_lambda": 0.92,
+    "grad_norm_clip": 1.0,
+    "entropy_loss_scale": 0.001,
+    "random_timesteps": 5000,
+    "normalize_img": true
+  },
+  "model": {
+    "critic_hidden_dims_from_actor": true,
+    "critic_branch_kwargs_from_actor": false,
+    "recurrent": {
+      "enabled": false
+    },
+    "features": {
+      "use_img": false,
+      "use_memory": false,
+      "use_goal": true,
+      "use_gt_orientation": false,
+      "use_graph": false,
+      "graph_ref": "graph_encoder",
+      "graph_dim": 128,
+      "use_orientation_module": true,
+      "orientation_ref": "orientation_module",
+      "orientation_dim": 1
+    },
+    "actor": {
+      "class_path": "models.a2c_models.make_a2c_nav_actor",
+      "kwargs": {
+        "hidden_dims": {
+          "$value": [
+            32
+          ]
+        }
+      }
+    },
+    "critic": {
+      "class_path": "models.a2c_models.A2CNavValue",
+      "kwargs": {}
+    }
+  }
+}

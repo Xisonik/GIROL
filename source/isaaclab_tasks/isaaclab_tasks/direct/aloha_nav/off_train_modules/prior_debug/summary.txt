@@ -1,0 +1,69 @@
+AKGVP prior graph summary
+==========================
+scene_family: default_room
+K: 5
+num_scenes: 500
+object_vocab_size: 16
+node_features_shape: (5, 16)
+object_probs_shape: (5, 16)
+adjacency_shape: (5, 5)
+grid_cells_reference: 209
+builder_grid_step: 0.5
+builder_num_yaws: 8
+builder_fov_deg: 90.0
+builder_max_visible_distance: 3.0
+
+Zone centers used for visualization
+-----------------------------------
+center_source: grid_labels
+zone_0: x= 3.171, y= 2.026, reference_cells=38, stored_prior=( 2.363,  0.235)
+zone_1: x=-1.900, y=-2.356, reference_cells=45, stored_prior=(-1.265, -0.239)
+zone_2: x= 0.000, y= 1.977, reference_cells=44, stored_prior=(-0.508,  1.170)
+zone_3: x= 2.214, y=-2.321, reference_cells=42, stored_prior=( 1.056, -1.393)
+zone_4: x=-3.200, y= 1.438, reference_cells=40, stored_prior=(-1.610, -0.072)
+
+Top objects per zone
+--------------------
+zone_0: teddy:0.142, box:0.075, chair_3:0.075, table_2:0.071, ladder:0.048
+zone_1: chair_3:0.094, desk:0.093, Yucca_Cane:0.072, ladder:0.071, vase:0.039
+zone_2: chair_3:0.113, TrashCan:0.105, chair_2:0.052, oven:0.050, desk:0.029
+zone_3: teddy:0.092, Standard_HalfUnit:0.087, chair_3:0.086, cabinet:0.080, clock:0.061
+zone_4: lamp:0.148, chair_3:0.085, Yucca_Cane:0.050, oven:0.047, Standard_HalfUnit:0.043
+
+Adjacency
+---------
+min=0.0000, max=0.3708, sum=5.0000
+
+Tests
+-----
+PASS=28, WARN=2, FAIL=0
+[PASS] schema_has_K: 
+[PASS] schema_has_node_features: 
+[PASS] schema_has_adjacency: 
+[PASS] schema_has_zone_centers_xy: 
+[PASS] schema_has_grid_xy: 
+[PASS] schema_has_grid_to_zone: 
+[PASS] schema_has_builder_config: 
+[PASS] schema_has_object_vocab: V=16
+[PASS] schema_has_object_probs: shape=(5, 16)
+[PASS] K_positive: K=5
+[PASS] node_features_shape: shape=(5, 16)
+[PASS] adjacency_shape: shape=(5, 5)
+[PASS] zone_centers_shape: shape=(5, 2)
+[PASS] grid_xy_shape: shape=(209, 2)
+[PASS] grid_to_zone_shape: shape=(209,)
+[PASS] object_probs_shape: shape=(5, 16)
+[PASS] adjacency_range: min=0.0000, max=0.3708
+[PASS] adjacency_diagonal_zero: 
+[WARN] adjacency_symmetry: max_asym=0.127525; acceptable for row-normalized transition probabilities
+[PASS] grid_to_zone_range: 
+[PASS] each_zone_has_grid_cells: counts=[38, 45, 44, 42, 40]
+[PASS] graph_not_empty: edge_mass=5.0000
+[WARN] graph_not_complete: Every directed off-diagonal edge is positive; adjacency may be too dense
+[PASS] object_probs_range: min=0.0070, max=0.1479
+[PASS] semantic_signal_per_zone: max_per_zone=[0.1421, 0.0935, 0.1129, 0.0921, 0.1479]
+[PASS] optional_node_features_std: shape=(5, 16)
+[PASS] optional_zone_object_probs_std: shape=(5, 16)
+[PASS] optional_node_object_probs_std: shape=(5, 16)
+[PASS] optional_zone_centers_xy_std: shape=(5, 2)
+[PASS] optional_adjacency_std: shape=(5, 5)

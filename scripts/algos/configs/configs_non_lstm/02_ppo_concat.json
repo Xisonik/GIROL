@@ -1,0 +1,44 @@
+{
+  "run": {
+    "algo": "ppo",
+    "name": "ppo_concat_non_lstm"
+  },
+  "agent": {
+    "rollouts": 128,
+    "learning_epochs": 8,
+    "mini_batches": 8,
+    "learning_rate": 0.0003,
+    "gamma": 0.99,
+    "gae_lambda": 0.95,
+    "grad_norm_clip": 0.5,
+    "ratio_clip": 0.2,
+    "value_clip": 0.2,
+    "entropy_loss_scale": 0.0,
+    "value_loss_scale": 2.5,
+    "kl_threshold": 0.0,
+    "random_timesteps": 0,
+    "learning_starts": 0,
+    "normalize_img": true
+  },
+  "model": {
+    "critic_hidden_dims_from_actor": true,
+    "critic_branch_kwargs_from_actor": false,
+    "recurrent": {
+      "enabled": false
+    },
+    "actor": {
+      "class_path": "models.a2c_models.make_a2c_nav_actor",
+      "kwargs": {
+        "hidden_dims": {
+          "$value": [
+            32
+          ]
+        }
+      }
+    },
+    "critic": {
+      "class_path": "models.a2c_models.A2CNavValue",
+      "kwargs": {}
+    }
+  }
+}

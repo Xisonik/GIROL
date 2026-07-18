@@ -1,0 +1,494 @@
+{
+  "objects": [
+    {
+      "name": "table_2",
+      "info": {
+        "color": "green",
+        "add_info": [],
+        "position": []
+      },
+      "type": [
+        "static_obstacle",
+        "surface_provider",
+        "changeable_color"
+      ],
+      "count": 3,
+      "size": [
+        0.35,
+        0.35,
+        0.8
+      ],
+      "usd_paths": [
+        "scenes/scenes_sber_kitchen_for_BBQ/table/table_2.usd"
+      ],
+      "id": 1
+    },
+    {
+      "_comment1": "Error: True",
+      "name": "box",
+      "info": {
+        "color": "yellow",
+        "add_info": [],
+        "position": []
+      },
+      "type": [
+        "movable_obstacle"
+      ],
+      "count": 1,
+      "size": [
+        0.4,
+        0.4,
+        0.9
+      ],
+      "usd_paths": [
+        "scenes/obstacles/box.usd"
+      ],
+      "id": 2
+    },
+    {
+      "_comment1": "Error: False",
+      "name": "oven",
+      "info": {
+        "color": "yellow",
+        "add_info": [],
+        "position": []
+      },
+      "type": [
+        "staff_obstacle"
+      ],
+      "count": 1,
+      "size": [
+        0.4,
+        0.4,
+        0.9
+      ],
+      "usd_paths": [
+        "scenes/obstacles/wall_oven.usd"
+      ],
+      "id": 3
+    },
+    {
+      "name": "desk",
+      "info": {
+        "color": "gray",
+        "add_info": [],
+        "position": []
+      },
+      "type": [
+        "staff_obstacle"
+      ],
+      "count": 1,
+      "size": [
+        0.35,
+        0.35,
+        0.8
+      ],
+      "usd_paths": [
+        "scenes/scenes_sber_kitchen_for_BBQ/table/table.usd"
+      ],
+      "id": 4
+    },
+    {
+      "name": "chair_2",
+      "info": {
+        "color": "orange",
+        "add_info": [],
+        "position": []
+      },
+      "type": [
+        "staff_obstacle"
+      ],
+      "count": 2,
+      "size": [
+        0.35,
+        0.35,
+        0.9
+      ],
+      "usd_paths": [
+        "scenes/obstacles/chair2.usd"
+      ],
+      "id": 5
+    },
+    {
+      "name": "chair_3",
+      "info": {
+        "color": "red",
+        "add_info": [],
+        "position": []
+      },
+      "type": [
+        "movable_obstacle"
+      ],
+      "count": 4,
+      "size": [
+        0.35,
+        0.35,
+        0.9
+      ],
+      "usd_paths": [
+        "scenes/obstacles/chair3.usd"
+      ],
+      "id": 6
+    },
+    {
+      "_comment1": "Error: True",
+      "name": "cabinet",
+      "info": {
+        "color": "brown",
+        "add_info": [],
+        "position": []
+      },
+      "type": [
+        "movable_obstacle"
+      ],
+      "count": 1,
+      "size": [
+        0.4,
+        0.4,
+        0.9
+      ],
+      "usd_paths": [
+        "scenes/obstacles/cabinet.usd"
+      ],
+      "id": 7
+    },
+    {
+      "_comment1": "Error: False",
+      "name": "TrashCan",
+      "info": {
+        "color": "black",
+        "add_info": [],
+        "position": []
+      },
+      "type": [
+        "staff_obstacle"
+      ],
+      "count": 1,
+      "size": [
+        0.4,
+        0.4,
+        0.9
+      ],
+      "usd_paths": [
+        "scenes/obstacles/TrashCan.usd"
+      ],
+      "id": 8
+    },
+    {
+      "_comment1": "Error: False",
+      "name": "vase",
+      "info": {
+        "color": "yellow",
+        "add_info": [],
+        "position": []
+      },
+      "type": [
+        "staff_obstacle"
+      ],
+      "count": 1,
+      "size": [
+        0.4,
+        0.4,
+        0.9
+      ],
+      "usd_paths": [
+        "scenes/obstacles/vase.usd"
+      ],
+      "id": 9
+    },
+    {
+      "_comment1": "Error: True",
+      "name": "clock",
+      "info": {
+        "color": "brown",
+        "add_info": [],
+        "position": []
+      },
+      "type": [
+        "staff_obstacle"
+      ],
+      "count": 1,
+      "size": [
+        0.4,
+        0.4,
+        0.9
+      ],
+      "usd_paths": [
+        "scenes/obstacles/clock.usd"
+      ],
+      "id": 10
+    },
+    {
+      "_comment1": "Error: False",
+      "name": "Crestwood_Chair",
+      "info": {
+        "color": "red",
+        "add_info": [],
+        "position": []
+      },
+      "type": [
+        "staff_obstacle"
+      ],
+      "count": 1,
+      "size": [
+        0.4,
+        0.4,
+        0.9
+      ],
+      "usd_paths": [
+        "scenes/obstacles/Crestwood_Chair.usd"
+      ],
+      "id": 11
+    },
+    {
+      "_comment1": "Error: False",
+      "name": "ladder",
+      "info": {
+        "color": "yellow",
+        "add_info": [],
+        "position": []
+      },
+      "type": [
+        "staff_obstacle"
+      ],
+      "count": 1,
+      "size": [
+        0.4,
+        0.4,
+        0.9
+      ],
+      "usd_paths": [
+        "scenes/obstacles/ladder.usd"
+      ],
+      "id": 12
+    },
+    {
+      "_comment1": "Error: True",
+      "name": "lamp",
+      "info": {
+        "color": "white",
+        "add_info": [],
+        "position": []
+      },
+      "type": [
+        "staff_obstacle"
+      ],
+      "count": 1,
+      "size": [
+        0.4,
+        0.4,
+        0.9
+      ],
+      "usd_paths": [
+        "scenes/obstacles/lamp.usd"
+      ],
+      "id": 13
+    },
+    {
+      "_comment1": "Error: True",
+      "name": "Standard_HalfUnit",
+      "info": {
+        "color": "white",
+        "add_info": [],
+        "position": []
+      },
+      "type": [
+        "staff_obstacle"
+      ],
+      "count": 1,
+      "size": [
+        0.4,
+        0.4,
+        0.9
+      ],
+      "usd_paths": [
+        "scenes/obstacles/Standard_HalfUnit.usd"
+      ],
+      "id": 14
+    },
+    {
+      "_comment1": "Error: True",
+      "name": "Yucca_Cane",
+      "info": {
+        "color": "green",
+        "add_info": [],
+        "position": []
+      },
+      "type": [
+        "staff_obstacle"
+      ],
+      "count": 1,
+      "size": [
+        0.4,
+        0.4,
+        0.9
+      ],
+      "usd_paths": [
+        "scenes/obstacles/YuccaCane.usd"
+      ],
+      "id": 15
+    },
+    {
+      "name": "teddy",
+      "info": {
+        "color": "yellow",
+        "add_info": [],
+        "position": []
+      },
+      "type": [
+        "possible_goal",
+        "surface_only"
+      ],
+      "count": 1,
+      "size": [
+        0.15,
+        0.15,
+        0.05
+      ],
+      "usd_paths": [
+        "scenes/obstacles/teddy.usd"
+      ],
+      "id": 16
+    }
+  ],
+  "type_placements": {
+    "surface_provider": {
+      "strategy": "grid",
+      "grid_coordinates": [
+        [
+          4,
+          0,
+          0.0
+        ],
+        [
+          -4,
+          0,
+          0.0
+        ]
+      ]
+    },
+    "goal_possible_positions": {
+      "strategy": "grid",
+      "grid_coordinates": [
+        [
+          4,
+          0,
+          0.0
+        ],
+        [
+          -4,
+          0,
+          0.0
+        ]
+      ]
+    },
+    "movable_obstacle": {
+      "strategy": "grid",
+      "grid_coordinates": [
+        [
+          1.5,
+          -0.5,
+          0.0
+        ],
+        [
+          -1.5,
+          -0.5,
+          0.0
+        ],
+        [
+          1.5,
+          0.5,
+          0.0
+        ],
+        [
+          -1.5,
+          0.5,
+          0.0
+        ]
+      ]
+    },
+    "staff_obstacle": {
+      "strategy": "grid",
+      "grid_coordinates": [
+        [
+          -2,
+          4.3,
+          0.0
+        ],
+        [
+          0,
+          4.3,
+          0.0
+        ],
+        [
+          2,
+          4.3,
+          0.0
+        ],
+        [
+          -2,
+          -4.3,
+          0.0
+        ],
+        [
+          0,
+          -4.3,
+          0.0
+        ],
+        [
+          2,
+          -4.3,
+          0.0
+        ],
+        [
+          4.3,
+          4.3,
+          0.0
+        ],
+        [
+          -4.3,
+          4.3,
+          0.0
+        ],
+        [
+          4.3,
+          -4.3,
+          0.0
+        ],
+        [
+          -4.3,
+          -4.3,
+          0.0
+        ],
+        [
+          4.3,
+          2,
+          0.0
+        ],
+        [
+          -4.3,
+          2,
+          0.0
+        ],
+        [
+          4.3,
+          -2,
+          0.0
+        ],
+        [
+          -4.3,
+          -2,
+          0.0
+        ]
+      ]
+    },
+    "surface_only": {
+      "strategy": "on_surface",
+      "surface_types": [
+        "surface_provider"
+      ],
+      "margin": 0.0
+    }
+  },
+  "_semantic_blocks_note": "Runtime placement is controlled by layout_rules.json semantic_blocks. type_placements is retained only for backward compatibility."
+}
