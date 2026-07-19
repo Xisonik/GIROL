@@ -46,7 +46,7 @@ class OrientationAuxTrainer:
         lr_orient: float = 3e-5,
         batch_size: int = 256,
         train_steps_per_call: int = 1,
-        log_interval: int = 50,
+        log_interval: int = 2000,
         grad_norm_clip: float = 1.0,
         save_interval: int = 1000,
         checkpoint_dir: Optional[str] = None,
