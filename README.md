@@ -19,39 +19,17 @@ or
 conda env create -f environment.yml
 ```
 
-link for all data and assets:
+download assets:
 ```
-https://drive.google.com/drive/folders/1sdWFHsREqW_2fmu2E2mjV8LxF6KUYaSe?usp=sharing
+./download_girol_assets.sh
 ```
 Train navigation:
 ```
-./isaaclab.sh -p scripts/algos/run_sac.py
+./isaaclab.sh -p scripts/algos/run_experiments.py
 ```
 
 Imitation learning:
-For IL firsly you should get paths:
-```
-./isaaclab.sh -p path_generator.py
-```
 To generate paths via dijkstra algo (Check, that there no all_paths.json in data):
 ```
 ./isaaclab.sh -p source/isaaclab_tasks/isaaclab_tasks/direct/aloha/path_generator.py 
 ```
-1. Put aloha_assets.zip and unzip it to IsaacLab/source/isaaclab_assets/data/
-Asset directories should look like this by the path IsaacLab/source/isaaclab_assets/data/:
-```
-└── aloha_assets
-    ├── aloha
-    │   ├── aloha.usd
-    │   └── realsense.usd
-    ├── objects
-    │   └── bowl.usd
-    └── scenes
-        ├── obstacles
-        └── scenes_sber_kitchen_for_BBQ
-            ├── kitchen_new_simple.usd
-            └── table
-```
-2. Put "all_paths.json" to "IsaacLab/data/"
-3. Put "text_embeddings.pt" to "IsaacLab/source/isaaclab_tasks/isaaclab_tasks/direct/aloha_nav/"
-4. Replace the "skrl" folder on the "miniconda3/envs/env_isaaclab/lib/python3.10/site-packages/skrl" path with a folder from IsaacLab

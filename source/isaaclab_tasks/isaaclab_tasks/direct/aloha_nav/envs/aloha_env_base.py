@@ -237,7 +237,7 @@ class BaseWheeledRobotEnv(DirectRLEnv):
         self.stage = 0
         self.use_staff = self._default_use_staff()
         self.use_obstacles = self._default_use_obstacles()
-        self.use_controller = kwargs.get('expert', False)
+        self.use_controller = True #kwargs.get('expert', False)
         self.imitation = False #kwargs.get('imitation', False)
         self.cur_angle_error = 0
         self.mean_radius = 0
