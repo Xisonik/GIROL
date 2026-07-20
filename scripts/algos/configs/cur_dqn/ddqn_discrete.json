@@ -6,12 +6,12 @@
     "seed": 42,
     "num_envs": 32,
     "headless": true,
-    "video": false,
-    "eval": false,
+    "video": true,
+    "eval": true,
     "folder": "debug",
     "write_interval": 10,
     "checkpoint_interval": 1000,
-    "timesteps": 20000000
+    "timesteps": 2000
   },
   "agent": {
     "memory_size": 4000,
@@ -96,8 +96,8 @@
     "text_embeddings": "source/isaaclab_tasks/isaaclab_tasks/direct/aloha_nav/text_embeddings.pt",
     "graphs_dir": "/home/xiso/IsaacLab/eval_scenes_new_sgg2",
     "log_root": "logs/skrl",
-    "agent_checkpoint": null,
-    "state_preprocessor_checkpoint": null,
-    "aux_checkpoint": null
+    "agent_checkpoint": "logs/skrl/Aloha_nav_hab_wr/07.19_16-15-31_cur_dqn/ddqn_discrete/checkpoints/best_agent.pt",
+    "state_preprocessor_checkpoint": "logs/skrl/Aloha_nav_hab_wr/07.19_16-15-31_cur_dqn/ddqn_discrete/checkpoints/state_preprocessor_latest.pt",
+    "aux_checkpoint": "logs/skrl/Aloha_nav_hab_wr/07.19_16-15-31_cur_dqn/ddqn_discrete/aux_checkpoints/aux_latest.pt"
   }
 }

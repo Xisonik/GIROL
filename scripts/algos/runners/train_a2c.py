@@ -5,12 +5,13 @@ from __future__ import annotations
 
 from skrl.agents.torch.a2c import A2C, A2C_RNN, A2C_DEFAULT_CONFIG
 
-from skrl_train_base import BaseSkrlTrain, recurrent_enabled
+from skrl_train_base import BaseSkrlTrain, EvalActionSource, recurrent_enabled
 
 
 class A2CTrain(BaseSkrlTrain):
     algo_name = "a2c"
     supports_recurrent = True
+    eval_action_source = EvalActionSource.MEAN_ACTION
 
     def agent_class(self, cfg: dict):
         return A2C_RNN if recurrent_enabled(cfg) else A2C
