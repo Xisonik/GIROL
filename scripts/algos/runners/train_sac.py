@@ -14,12 +14,13 @@ from __future__ import annotations
 import gymnasium as gym
 from skrl.agents.torch.sac import SAC, SAC_DEFAULT_CONFIG
 
-from skrl_train_base import BaseSkrlTrain
+from skrl_train_base import BaseSkrlTrain, EvalActionSource
 
 
 class SACTrain(BaseSkrlTrain):
     algo_name = "sac"
     supports_recurrent = False
+    eval_action_source = EvalActionSource.MEAN_ACTION
 
     def agent_class(self, cfg: dict):
         return SAC

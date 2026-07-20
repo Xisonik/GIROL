@@ -11,7 +11,7 @@
     "folder": "debug",
     "write_interval": 10,
     "checkpoint_interval": 1000,
-    "timesteps": 20000000
+    "timesteps": 2000000
   },
   "agent": {
     "memory_size": 4000,
@@ -53,7 +53,12 @@
             "cfg": "paths.graphs_dir"
           },
           "out_dim": 128,
-          "dropout": 0.1
+          "dropout": 0.1,
+          "edge_mode": "goal_star",
+          "include_node_metric": false,
+          "include_node_is_goal": false,
+          "self_loops": false,
+          "print_graph_config": true
         },
         "eval": true
       },
@@ -75,7 +80,9 @@
       "class_path": "models.ddqn_models.DDQNNavQNetwork",
       "kwargs": {
         "hidden_dims": {
-          "$value": [256]
+          "$value": [
+            256
+          ]
         }
       }
     }

@@ -235,14 +235,9 @@ class BaseWheeledRobotEnv(DirectRLEnv):
 
         self.CL_ON = CL_ON
         self.stage = 0
-        # Highest curriculum stage the training loop will progress to (0..4).
-        # Default 4 so the success-gated curriculum walks 0→1→2→3→4.
-        # Override via ALOHA_NAV_ENV_CFG, e.g.
-        #   export ALOHA_NAV_ENV_CFG='{"MAX_STAGE": 2}'   # old 0→1→2 behavior
-        self.max_curriculum_stage = int(env_get("MAX_STAGE", 4))
         self.use_staff = self._default_use_staff()
         self.use_obstacles = self._default_use_obstacles()
-        self.use_controller = kwargs.get('expert', False)
+        self.use_controller = True #kwargs.get('expert', False)
         self.imitation = False #kwargs.get('imitation', False)
         self.cur_angle_error = 0
         self.mean_radius = 0
@@ -351,21 +346,11 @@ class BaseWheeledRobotEnv(DirectRLEnv):
             enabled=runtime_cfg.get("relative_yaw_noise", False),
         )
 
-        # TURN_TASK: pure "turn in place to face the goal" task. The robot does not
-        # translate (linear speed forced to 0 in _pre_physics_step); reward = reduction
-        # of the angle to the goal; success = facing the goal within 20° (no distance).
-        # Enable via ALOHA_NAV_ENV_CFG='{"TURN_TASK": true}'.
-        self.TURN_TASK = bool(env_get("TURN_TASK", False))
+        self.TURN_TASK = False #TODO: bool(runtime_cfg.get("turn_task", True))
         if self.TURN_TASK:
-            self.stage = 4
-            self.use_controller = False   # no navigation expert / path planning
-            self.CL_ON = False # Curriculum stays ON (CL_ON unchanged): stages advance on facing-goal
-            # success, which in TURN_TASK is exactly "the robot oriented to the goal".
-        # TURN_TASK: success (facing goal <20°) is not allowed in the first
-        # `turn_min_steps` steps of an episode, so a robot that spawns already aligned
-        # can't win at step 0 — it must actually be facing the goal a few steps in.
-        # Configure via ALOHA_NAV_ENV_CFG='{"TURN_MIN_STEPS": 5}'; 0 disables the guard.
-        self.turn_min_steps = int(env_get("TURN_MIN_STEPS", 3))
+            self.stage = 4 #TODO: 4
+            self.CL_ON = False
+            self.use_controller = False
         self.DEF_TURN = False
         self._update_controlled_envs()
 
@@ -861,11 +846,8 @@ class BaseWheeledRobotEnv(DirectRLEnv):
         num_conditions_met = conditions.sum(dim=1)  # shape [N], количество True в каждой строк
 
         returns = torch.logical_and(close_enough, facing_goal)
-        if self.TURN_TASK:
+        if self.TURN_TASK: #TODO: WRONG DOING
             returns = facing_goal
-            if self.turn_min_steps > 0:
-                # No instant win: require the episode to be at least turn_min_steps in.
-                returns = returns & (self.episode_length_buf >= self.turn_min_steps)
         if get_num_subs == False:
             return returns
         return returns, num_conditions_met, distance_to_goal+0.1-radius_threshold, angle_degrees
@@ -968,12 +950,26 @@ class BaseWheeledRobotEnv(DirectRLEnv):
             )
             return ~(inside_outer & inside_active)
         else:
-            # TURN_TASK: the robot never translates, so it can't leave the room, and
-            # we deliberately do NOT terminate on "facing away". The whole point of the
-            # task is to let it turn toward the goal from ANY starting angle (incl. ~180°).
-            # (The stock code returned `angle_degrees > 150`, which instant-killed any
-            # robot spawned facing away — it could never learn to turn around.)
-            return torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
+            root_quat_w = self._robot.data.root_quat_w
+            root_pos_w = self._robot.data.root_pos_w
+            to_goal = self._desired_pos_w - root_pos_w
+            local_forward = torch.tensor(
+                [1.0, 0.0, 0.0],
+                device=root_quat_w.device,
+                dtype=root_quat_w.dtype,
+            ).unsqueeze(0).repeat(root_quat_w.shape[0], 1)
+            forward_w = self.quat_rotate(root_quat_w, local_forward)
+            forward_w_norm = torch.nn.functional.normalize(
+                forward_w[:, :2], dim=1
+            )
+            to_goal_norm = torch.nn.functional.normalize(
+                to_goal[:, :2], dim=1
+            )
+            cos_angle = torch.sum(
+                forward_w_norm * to_goal_norm, dim=1
+            ).clamp(-1.0, 1.0)
+            angle_degrees = torch.abs(torch.acos(cos_angle)) * 180.0 / math.pi
+            return angle_degrees > 150
 
     def update_sr_stack(self):
         self.success_stacks = [[] for _ in range(self.num_envs)]  # Список списков для каждой среды
@@ -1208,47 +1204,25 @@ class BaseWheeledRobotEnv(DirectRLEnv):
         
         # Stage 1 → 2: по достижению радиуса
         elif self.stage == 1 and self.mean_radius >= 6.0:
-            self.stage = min(2, self.max_curriculum_stage)
+            self.stage = 2
             self.cur_angle_error = 0
-            print(f"✓ [STAGE 1→2] Radius target reached (radius={self.mean_radius:.1f}m)")
-
+            print(f"✓ [STAGE 1→2] Final stage reached (radius={self.mean_radius:.1f}m)")
+        
         # ============ ЛОГИКА СЛОЖНОСТИ (Stage 1+) ============
-        # Stage 1: ramp angle/radius within the stage.
-        # Stage 2..(max-1): success-gated advance to the next stage. Stages 2/3/4
-        # use random robot placement with different yaw schemes, so there is no
-        # radius/angle knob to ramp — sustained success just switches the pose
-        # distribution to the next stage.
+        
         if self.stage >= 1 and self.sr_stack_full:
             if self.success_rate >= self.sr_treshhold:
                 self.success_ep_num += 1
                 self.foult_ep_num = 0
                 if self.success_ep_num > 512:
                     self.success_ep_num = 0
-                    if self.stage == 1:
-                        self._increase_difficulty()
-                    elif self.stage < self.max_curriculum_stage:
-                        self._advance_stage()
+                    self._increase_difficulty()
             elif self.success_rate <= 70:
                 self.foult_ep_num += 1
                 if self.foult_ep_num > 15120:
                     self.success_ep_num = 0
                     self.foult_ep_num = 0
                     self._decrease_difficulty()
-
-    def _advance_stage(self):
-        """Success-gated curriculum advance (stages 2→3→4).
-
-        Called when the policy sustains a high success rate at the current stage.
-        Stages 3/4 change the robot-pose distribution (see
-        place_robot_for_goal_stage_N); no radius/angle ramp applies there.
-        Capped at self.max_curriculum_stage.
-        """
-        prev = self.stage
-        self.stage = min(self.stage + 1, self.max_curriculum_stage)
-        self.cur_angle_error = 0
-        self._step_update_counter = 0
-        print(f"✓ [STAGE {prev}→{self.stage}] Success-gated advance (SR={self.success_rate:.0f}%).")
-        self.update_sr_stack()
 
     def _increase_difficulty(self):
         """Увеличить сложность при высоком успехе"""

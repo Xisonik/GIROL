@@ -6,7 +6,7 @@ from __future__ import annotations
 from copy import deepcopy
 
 import gymnasium as gym
-from skrl_train_base import BaseSkrlTrain, recurrent_enabled
+from skrl_train_base import BaseSkrlTrain, EvalActionSource, recurrent_enabled
 
 from skrl.agents.torch.dqn.ddqn import DDQN, DDQN_DEFAULT_CONFIG
 
@@ -15,10 +15,10 @@ def _default_ddqn_cfg():
     return deepcopy(DDQN_DEFAULT_CONFIG)
 
 
-
 class DDQNTrain(BaseSkrlTrain):
     algo_name = "ddqn"
     supports_recurrent = False
+    eval_action_source = EvalActionSource.RETURNED_ACTION
 
     def agent_class(self, cfg: dict):
         return DDQN
@@ -43,6 +43,20 @@ class DDQNTrain(BaseSkrlTrain):
                 f"DDQN requires gym.spaces.Discrete action space, got {type(env.action_space)}. "
                 "If the task uses MultiDiscrete, flatten it to a single Discrete action id before using DDQN."
             )
+
+    def adapt_agent_cfg_for_run_mode(self, skrl_cfg: dict, cfg: dict) -> dict:
+        skrl_cfg = super().adapt_agent_cfg_for_run_mode(skrl_cfg, cfg)
+
+        if cfg["run"].get("eval", False):
+            # DDQN evaluation must be greedy. The trainer will consume
+            # outputs[0], while this block disables epsilon-greedy exploration.
+            exploration = dict(skrl_cfg.get("exploration", {}))
+            exploration["initial_epsilon"] = 0.0
+            exploration["final_epsilon"] = 0.0
+            exploration["timesteps"] = 0
+            skrl_cfg["exploration"] = exploration
+
+        return skrl_cfg
 
     def build_models(self, env, cfg: dict, modules: dict, device):
         q_spec = cfg["model"].get("q_network")

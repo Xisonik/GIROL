@@ -18,6 +18,7 @@ import importlib
 import os
 import sys
 from copy import deepcopy
+from enum import Enum
 from pathlib import Path
 from typing import Any
 
@@ -50,6 +51,23 @@ from models.preprocessors import DictRunningStandardScaler  # noqa: E402
 from perception.orientation_module import print_orientation_accuracy  # noqa: E402
 
 DEFAULT_CONFIG = CONFIG_DIR / "base.json"
+
+
+class EvalActionSource(str, Enum):
+    """Source used by skrl's evaluation loop to select an action.
+
+    RETURNED_ACTION:
+        Use the primary action returned by agent.act(...). This is required by
+        discrete value-based agents such as DQN/DDQN whose auxiliary output may
+        be None.
+
+    MEAN_ACTION:
+        Use the deterministic mean action exposed by stochastic policies such
+        as A2C/PPO/SAC.
+    """
+
+    RETURNED_ACTION = "returned_action"
+    MEAN_ACTION = "mean_action"
 
 
 def recurrent_enabled(cfg: dict) -> bool:
@@ -124,6 +142,10 @@ class BaseSkrlTrain:
     algo_name = "base"
     supports_recurrent = False
 
+    # Most actor-policy agents expose mean_actions during evaluation.
+    # Value-based discrete runners must override this explicitly.
+    eval_action_source = EvalActionSource.MEAN_ACTION
+
     def __init__(self):
         self.args = parse_common_args()
         self.cfg: dict | None = None
@@ -190,12 +212,18 @@ class BaseSkrlTrain:
         )
 
         skrl_cfg = self.build_skrl_cfg(cfg, env, device, exp_dir)
+        skrl_cfg = self.adapt_agent_cfg_for_run_mode(skrl_cfg, cfg)
         AgentClass = self.agent_class(cfg)
 
         print(f"[{self.algo_name.upper()}] task={cfg['run']['task_name']} exp={exp_name}", flush=True)
         print(f"[{self.algo_name.upper()}] logs={exp_dir}", flush=True)
         print(f"[{self.algo_name.upper()}] modules={sorted(self.modules.keys())}", flush=True)
         print(f"[{self.algo_name.upper()}] agent={AgentClass.__name__}", flush=True)
+        if cfg["run"].get("eval", False):
+            print(
+                f"[{self.algo_name.upper()}] eval_action_source={self.eval_action_source.value}",
+                flush=True,
+            )
 
         save_json(cfg, exp_dir / "config.json")
         save_experiment_logs(
@@ -223,7 +251,7 @@ class BaseSkrlTrain:
         self.attach_aux_trainer(self.agent, env, cfg, self.modules, device, exp_dir)
 
         self.trainer = SequentialTrainer(
-            cfg={"timesteps": int(cfg["run"]["timesteps"])},
+            cfg=self.build_trainer_cfg(cfg),
             env=env,
             agents=self.agent,
         )
@@ -237,6 +265,36 @@ class BaseSkrlTrain:
             self.print_final_env_metrics(env, cfg)
         finally:
             self.close()
+
+    def adapt_agent_cfg_for_run_mode(self, skrl_cfg: dict, cfg: dict) -> dict:
+        """Apply mode-wide agent settings without knowing the algorithm details.
+
+        Evaluation must not execute a generic random warm-up. Algorithm-specific
+        exploration (for example DDQN epsilon-greedy) remains the responsibility
+        of the corresponding runner override.
+        """
+        if cfg["run"].get("eval", False) and "random_timesteps" in skrl_cfg:
+            skrl_cfg["random_timesteps"] = 0
+        return skrl_cfg
+
+    def build_trainer_cfg(self, cfg: dict) -> dict:
+        """Translate the runner's semantic action contract to skrl trainer cfg."""
+        source = self.eval_action_source
+        if not isinstance(source, EvalActionSource):
+            raise TypeError(
+                f"{type(self).__name__}.eval_action_source must be an "
+                f"EvalActionSource, got {source!r}"
+            )
+
+        return {
+            "timesteps": int(cfg["run"]["timesteps"]),
+            # In skrl this flag controls whether eval consumes outputs[0]
+            # or outputs[-1]["mean_actions"]. It does not by itself control
+            # DDQN epsilon-greedy exploration.
+            "stochastic_evaluation": (
+                source is EvalActionSource.RETURNED_ACTION
+            ),
+        }
 
     def apply_cli_overrides(self, cfg: dict) -> None:
         if self.args.folder is not None:
@@ -260,6 +318,12 @@ class BaseSkrlTrain:
         if cfg["run"].get("algo") != self.algo_name:
             raise ValueError(f"Runner algo={self.algo_name}, config run.algo={cfg['run'].get('algo')}")
 
+        if not isinstance(self.eval_action_source, EvalActionSource):
+            raise TypeError(
+                f"{type(self).__name__}.eval_action_source must be an "
+                f"EvalActionSource, got {self.eval_action_source!r}"
+            )
+
         if int(cfg["run"].get("num_envs", 0)) <= 0:
             raise ValueError("run.num_envs must be positive")
 
@@ -273,7 +337,6 @@ class BaseSkrlTrain:
     def resolve_num_envs(self, cfg: dict) -> int:
         num_envs = int(cfg["run"]["num_envs"])
         if cfg["run"].get("video", False) or cfg["run"].get("eval", False) or not cfg["run"].get("headless", True):
-            from numpy import clip
             num_envs = 1
         return num_envs
 

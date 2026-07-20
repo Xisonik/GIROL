@@ -32,3 +32,6 @@ ${data}/
 # Asset archives
 /source/isaaclab_assets/*.zip
 /source/isaaclab_assets/**/*.zip
+
+# Generated resolved experiment configs
+**/.resolved/
