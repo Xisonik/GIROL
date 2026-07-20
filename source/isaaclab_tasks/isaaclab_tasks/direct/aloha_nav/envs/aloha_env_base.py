@@ -346,10 +346,10 @@ class BaseWheeledRobotEnv(DirectRLEnv):
             enabled=runtime_cfg.get("relative_yaw_noise", False),
         )
 
-        self.TURN_TASK = False #TODO: bool(runtime_cfg.get("turn_task", True))
+        self.TURN_TASK = True   # turn-in-place task: robot rotates to face the goal
         if self.TURN_TASK:
-            self.stage = 4 #TODO: 4
-            self.CL_ON = False
+            self.stage = 4          # fixed placement: spawn ±90° off the goal
+            self.CL_ON = False      # no curriculum progression (stage stays 4)
             self.use_controller = False
         self.DEF_TURN = False
         self._update_controlled_envs()
