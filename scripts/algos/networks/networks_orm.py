@@ -136,6 +136,7 @@ class GraphEncoder(nn.Module):
         num_layers: int = 2,
         heads: int = 2,
         dropout: float = 0.1,
+        use_metric: bool = True,
     ):
         super().__init__()
         self.num_nodes = num_nodes
@@ -143,6 +144,11 @@ class GraphEncoder(nn.Module):
         self.text_dim = text_dim
         self.out_dim = out_dim
         self.dropout = dropout
+        # Baseline switch: when False the absolute metric coordinates (x, y, z)
+        # of every object are zeroed out before encoding, so the graph carries
+        # only semantic identity + goal flag. Flip this for the metric-ablation
+        # experiments; the baseline keeps it True.
+        self.use_metric = use_metric
 
         # --- Frozen CLIP text lookup ---
         # name_embs — таблица [num_names, 512] заранее посчитанных CLIP-эмбеддингов.
@@ -156,6 +162,18 @@ class GraphEncoder(nn.Module):
         # Публичное свойство для совместимости с _encode_text (fallback)
         # и _forward_from_json_scenes. Обновляется при добавлении новых имён.
         self.register_buffer("name_embs", self._name_embs, persistent=False)
+
+        # --- Compact-graph semantic lookup (АКТИВНЫЙ путь baseline) ---
+        # Таблица id_to_name_emb [num_ids+1, 512] проиндексирована НАПРЯМУЮ
+        # object_id из env (поле `id` в scene_items.json, 0..16). Это устраняет
+        # рассинхрон со старым hardcoded name_to_idx: object_id → CLIP-вектор
+        # берётся одним gather'ом, без CLIP в рантайме.
+        id_name_emb = payload["id_to_name_emb"].float()  # [num_ids+1, 512]
+        self.register_buffer("id_to_name_emb", id_name_emb, persistent=False)
+        self.max_object_id = id_name_emb.shape[0] - 1
+        # Число структурных фич на объект в компактном состоянии:
+        # [active, is_goal, x, y, z] (object_id используется только для lookup).
+        self.compact_struct_dim = 5
 
         # Маппинг имён объектов → индекс строки в name_embs.
         # Совпадает с id_map в env. Мутабелен: новые имена добавляются на лету.
@@ -192,7 +210,8 @@ class GraphEncoder(nn.Module):
         )
 
         # --- Node MLP + GATv2 ---
-        node_in = per_object_dim + text_dim  # 24 + text_dim (совместимость с fallback)
+        # Активный (compact) путь: node_in = [active, is_goal, x, y, z] + text_dim.
+        node_in = self.compact_struct_dim + text_dim
         self.node_mlp = nn.Sequential(
             nn.Linear(node_in, hidden_dim),
             nn.ReLU(inplace=True),
@@ -587,25 +606,54 @@ class GraphEncoder(nn.Module):
         return out
 
     # ------------------------------------------------------------------
+    # Основной (compact) путь: соответствует SceneManager.encode_scene_graph
+    # ------------------------------------------------------------------
+    def _forward_compact(self, graph_flat: torch.Tensor) -> torch.Tensor:
+        """
+        graph_flat: [B, 6*M] — компактное состояние из env.
+
+        Раскладка на объект (см. SceneManager.encode_scene_graph):
+            dim 0 : object_id  (config `id`, 0..16) → CLIP name-embedding lookup
+            dim 1 : active     (1.0 если объект присутствует в сцене)
+            dim 2 : is_goal    (1.0 для текущей цели навигации)
+            dims 3-5 : x, y, z (метрическая позиция в системе комнаты)
+
+        Число объектов M выводится из ширины тензора (robust к num_total_objects),
+        поэтому старый hardcoded 21×24 больше не нужен.
+        """
+        B = graph_flat.shape[0]
+        D = 6
+        M = graph_flat.shape[1] // D
+        g = graph_flat.view(B, M, D)
+
+        object_id = g[..., 0].long().clamp(0, self.max_object_id)  # [B, M]
+        struct = g[..., 1:6]                                       # [B, M, 5]
+
+        if not self.use_metric:
+            # Ablation: скрываем абсолютные координаты, оставляя active + is_goal.
+            struct = struct.clone()
+            struct[..., 2:5] = 0.0
+
+        # Семантика: object_id → CLIP-эмбеддинг → text_proj → text_dim.
+        name_emb = self.id_to_name_emb.to(g.device)[object_id]     # [B, M, 512]
+        text_emb = self.text_proj(name_emb)                       # [B, M, text_dim]
+
+        x = torch.cat([struct, text_emb], dim=-1).view(B * M, -1)  # [B*M, 5+text_dim]
+        edge_index = self._get_star_chain_edge_index(M, B, x.device)
+        batch_vec = torch.repeat_interleave(torch.arange(B, device=x.device), M)
+        return self._run_gat(x, edge_index, batch_vec)
+
+    # ------------------------------------------------------------------
     # Точка входа
     # ------------------------------------------------------------------
     def forward(self, graph_flat: torch.Tensor) -> torch.Tensor:
         """
-        graph_flat: [B, N*24] — принимается всегда (совместимость с буфером),
-        но используется только если scene_graph_cache пуст (fallback-режим).
-
-        Основной путь: берёт scene_ids из env и маршрутизирует в
-        _forward_from_json_scenes.
+        graph_flat: [B, 6*M] компактное состояние из SceneManager.encode_scene_graph.
+        Маршрутизируем в _forward_compact (см. его docstring по раскладке).
+        Legacy-пути (_forward_from_flat / _forward_from_json_scenes) сохранены
+        для совместимости, но не используются.
         """
-        # B = graph_flat.shape[0]
-        # scene_ids = self.env.unwrapped.get_current_scene_ids()  # [num_envs]
-
-        # if True and self.scene_graph_cache and scene_ids is not None:
-        #     # Обрезаем до B на случай, если num_envs > размера батча из буфера
-        #     scene_ids_b = scene_ids[:B].to(self.name_embs.device)
-        #     return self._forward_from_json_scenes(scene_ids_b, B)
-        # else:
-        return self._forward_from_flat(graph_flat)
+        return self._forward_compact(graph_flat)
         
     def print_scene_graph(self, scene_id: int) -> None:
         """Красиво печатает граф сцены: ноды с фичами и таблицу связей."""
