@@ -1463,23 +1463,78 @@ class SceneManager:
         return centers + offsets
 
     def place_robot_for_goal_stage_4(
-        self, config, env_ids: torch.Tensor, mean_dist: float,
-        min_dist: float, max_dist: float, angle_error: float
+        self,
+        config,
+        env_ids: torch.Tensor,
+        mean_dist: float,
+        min_dist: float,
+        max_dist: float,
+        angle_error: float,
     ):
-        num_envs = len(env_ids)
+        """
+        Stage 4:
+        - робот появляется в случайной допустимой позиции активных комнат;
+        - ориентация робота отклонена ровно на +90° или -90°
+        от направления на целевой объект.
+        """
+        env_ids = torch.as_tensor(
+            env_ids,
+            device=self.device,
+            dtype=torch.long,
+        )
+        num_envs = env_ids.numel()
+
+        # Случайная позиция внутри доступной области активных комнат.
+        spawn_margin = 1.6 + self.robot_radius
         final_robot_positions = self._sample_robot_positions_in_active_rooms(
-            num_envs, wall_margin=1.6 + self.robot_radius
+            num_envs,
+            wall_margin=spawn_margin,
         )
-        choices = torch.tensor(
-            [-torch.pi / 2, torch.pi / 2], device=self.device
+
+        # Вектор от робота к активной цели.
+        goal_xy = self.goal_positions[env_ids, :2]
+        direction_to_goal = goal_xy - final_robot_positions[:, :2]
+
+        # Ориентация, при которой робот смотрел бы прямо на цель.
+        yaw_to_goal = torch.atan2(
+            direction_to_goal[:, 1],
+            direction_to_goal[:, 0],
         )
-        final_yaw = choices[torch.randint(
-            0, 2, (num_envs,), device=self.device
-        )]
-        robot_quats = torch.zeros(num_envs, 4, device=self.device)
+
+        # Для каждого env случайно выбираем поворот -90° или +90°.
+        side_sign = torch.where(
+            torch.randint(
+                0,
+                2,
+                (num_envs,),
+                device=self.device,
+            ) == 0,
+            -torch.ones(num_envs, device=self.device),
+            torch.ones(num_envs, device=self.device),
+        )
+
+        final_yaw = yaw_to_goal + side_sign * (torch.pi / 2.0)
+
+        # Нормализация в диапазон [-pi, pi].
+        final_yaw = torch.atan2(
+            torch.sin(final_yaw),
+            torch.cos(final_yaw),
+        )
+
+        # Quaternion в формате [w, x, y, z].
+        robot_quats = torch.zeros(
+            num_envs,
+            4,
+            device=self.device,
+        )
         robot_quats[:, 0] = torch.cos(final_yaw / 2.0)
         robot_quats[:, 3] = torch.sin(final_yaw / 2.0)
-        self.remove_colliding_obstacles(env_ids, final_robot_positions)
+
+        self.remove_colliding_obstacles(
+            env_ids,
+            final_robot_positions,
+        )
+
         return final_robot_positions, robot_quats
 
     def place_robot_for_goal_stage_3(
