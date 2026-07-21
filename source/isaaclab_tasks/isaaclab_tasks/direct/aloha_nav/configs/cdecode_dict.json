@@ -1,146 +1,402 @@
 {
   "names": {
     "box": 0,
-    "cabinet": 1,
-    "chair": 2,
-    "clock": 3,
-    "crestwood": 4,
-    "desk": 5,
-    "ladder": 6,
-    "lamp": 7,
-    "oven": 8,
-    "standard": 9,
-    "table": 10,
-    "teddy": 11,
-    "trashcan": 12,
-    "vase": 13,
-    "yucca": 14
-  },
-  "colors": {
-    "black": 0,
-    "brown": 1,
-    "gray": 2,
-    "green": 3,
-    "orange": 4,
-    "red": 5,
-    "white": 6,
-    "yellow": 7
+    "chair": 1,
+    "clock": 2,
+    "desk": 3,
+    "electric fan": 4,
+    "kitchen cabinet": 5,
+    "kitchen stove": 6,
+    "ladder": 7,
+    "lamp": 8,
+    "laundry basket": 9,
+    "potted houseplant": 10,
+    "refrigerator": 11,
+    "shower enclosure": 12,
+    "storage cabinet": 13,
+    "table": 14,
+    "teddy bear": 15,
+    "trash can": 16,
+    "vase": 17,
+    "wall oven": 18,
+    "washing machine": 19,
+    "wooden chair": 20
   },
   "objects": {
     "1": {
       "name": "table",
-      "color": "green",
-      "raw_name": "table_2"
+      "raw_name": "table_2",
+      "clip_prompts": [
+        "a photo of a table",
+        "an indoor household table"
+      ]
     },
     "2": {
       "name": "box",
-      "color": "yellow",
-      "raw_name": "box"
+      "raw_name": "box",
+      "clip_prompts": [
+        "a photo of a box",
+        "a storage box"
+      ]
     },
     "3": {
-      "name": "oven",
-      "color": "yellow",
-      "raw_name": "oven"
+      "name": "wall oven",
+      "raw_name": "oven",
+      "clip_prompts": [
+        "a photo of a wall oven",
+        "a built-in kitchen oven"
+      ]
     },
     "4": {
       "name": "desk",
-      "color": "gray",
-      "raw_name": "desk"
+      "raw_name": "desk",
+      "clip_prompts": [
+        "a photo of a desk",
+        "an indoor office desk"
+      ]
     },
     "5": {
       "name": "chair",
-      "color": "orange",
-      "raw_name": "chair_2"
+      "raw_name": "chair_2",
+      "clip_prompts": [
+        "a photo of a chair",
+        "an indoor dining chair"
+      ]
     },
     "6": {
       "name": "chair",
-      "color": "red",
-      "raw_name": "chair_3"
+      "raw_name": "chair_3",
+      "clip_prompts": [
+        "a photo of a chair",
+        "an indoor dining chair"
+      ]
     },
     "7": {
-      "name": "cabinet",
-      "color": "brown",
-      "raw_name": "cabinet"
+      "name": "storage cabinet",
+      "raw_name": "cabinet",
+      "clip_prompts": [
+        "a photo of a storage cabinet",
+        "an indoor storage cupboard"
+      ]
     },
     "8": {
-      "name": "trashcan",
-      "color": "black",
-      "raw_name": "TrashCan"
+      "name": "trash can",
+      "raw_name": "TrashCan",
+      "clip_prompts": [
+        "a photo of a trash can",
+        "an indoor waste bin"
+      ]
     },
     "9": {
       "name": "vase",
-      "color": "yellow",
-      "raw_name": "vase"
+      "raw_name": "vase",
+      "clip_prompts": [
+        "a photo of a vase",
+        "an indoor decorative vase"
+      ]
     },
     "10": {
       "name": "clock",
-      "color": "brown",
-      "raw_name": "clock"
+      "raw_name": "clock",
+      "clip_prompts": [
+        "a photo of a clock",
+        "an indoor wall clock"
+      ]
     },
     "11": {
-      "name": "crestwood",
-      "color": "red",
-      "raw_name": "Crestwood_Chair"
+      "name": "wooden chair",
+      "raw_name": "Crestwood_Chair",
+      "clip_prompts": [
+        "a photo of a wooden chair",
+        "an indoor wooden dining chair"
+      ]
     },
     "12": {
       "name": "ladder",
-      "color": "yellow",
-      "raw_name": "ladder"
+      "raw_name": "ladder",
+      "clip_prompts": [
+        "a photo of a ladder",
+        "an indoor step ladder"
+      ]
     },
     "13": {
       "name": "lamp",
-      "color": "white",
-      "raw_name": "lamp"
+      "raw_name": "lamp",
+      "clip_prompts": [
+        "a photo of a lamp",
+        "an indoor household lamp"
+      ]
     },
     "14": {
-      "name": "standard",
-      "color": "white",
-      "raw_name": "Standard_HalfUnit"
+      "name": "kitchen cabinet",
+      "raw_name": "Standard_HalfUnit",
+      "clip_prompts": [
+        "a photo of a kitchen cabinet",
+        "a kitchen base cabinet"
+      ]
     },
     "15": {
-      "name": "yucca",
-      "color": "green",
-      "raw_name": "Yucca_Cane"
+      "name": "potted houseplant",
+      "raw_name": "Yucca_Cane",
+      "clip_prompts": [
+        "a photo of a potted yucca plant",
+        "an indoor potted houseplant"
+      ]
     },
     "16": {
-      "name": "teddy",
-      "color": "yellow",
-      "raw_name": "teddy"
+      "name": "teddy bear",
+      "raw_name": "teddy",
+      "clip_prompts": [
+        "a photo of a teddy bear",
+        "a stuffed toy bear"
+      ]
+    },
+    "17": {
+      "name": "shower enclosure",
+      "raw_name": "dushevaia",
+      "clip_prompts": [
+        "a photo of a shower enclosure",
+        "an indoor shower cabin"
+      ]
+    },
+    "18": {
+      "name": "refrigerator",
+      "raw_name": "holodilnik",
+      "clip_prompts": [
+        "a photo of a refrigerator",
+        "a kitchen fridge"
+      ]
+    },
+    "19": {
+      "name": "kitchen stove",
+      "raw_name": "plita",
+      "clip_prompts": [
+        "a photo of a kitchen stove",
+        "an indoor cooking stove"
+      ]
+    },
+    "20": {
+      "name": "washing machine",
+      "raw_name": "stiralka",
+      "clip_prompts": [
+        "a photo of a washing machine",
+        "a front-loading washing machine"
+      ]
+    },
+    "21": {
+      "name": "laundry basket",
+      "raw_name": "vanna_korzina",
+      "clip_prompts": [
+        "a photo of a laundry basket",
+        "an indoor clothes basket"
+      ]
+    },
+    "22": {
+      "name": "electric fan",
+      "raw_name": "ventolator",
+      "clip_prompts": [
+        "a photo of an electric fan",
+        "an indoor household fan"
+      ]
     }
   },
-  "class_color_to_id": {
-    "table|green": 1,
-    "box|yellow": 2,
-    "oven|yellow": 3,
-    "desk|gray": 4,
-    "chair|orange": 5,
-    "chair|red": 6,
-    "cabinet|brown": 7,
-    "trashcan|black": 8,
-    "vase|yellow": 9,
-    "clock|brown": 10,
-    "crestwood|red": 11,
-    "ladder|yellow": 12,
-    "lamp|white": 13,
-    "standard|white": 14,
-    "yucca|green": 15,
-    "teddy|yellow": 16
+  "semantic_prompt_ensembles": {
+    "box": [
+      "a photo of a box",
+      "a storage box"
+    ],
+    "chair": [
+      "a photo of a chair",
+      "an indoor dining chair"
+    ],
+    "clock": [
+      "a photo of a clock",
+      "an indoor wall clock"
+    ],
+    "desk": [
+      "a photo of a desk",
+      "an indoor office desk"
+    ],
+    "electric fan": [
+      "a photo of an electric fan",
+      "an indoor household fan"
+    ],
+    "kitchen cabinet": [
+      "a photo of a kitchen cabinet",
+      "a kitchen base cabinet"
+    ],
+    "kitchen stove": [
+      "a photo of a kitchen stove",
+      "an indoor cooking stove"
+    ],
+    "ladder": [
+      "a photo of a ladder",
+      "an indoor step ladder"
+    ],
+    "lamp": [
+      "a photo of a lamp",
+      "an indoor household lamp"
+    ],
+    "laundry basket": [
+      "a photo of a laundry basket",
+      "an indoor clothes basket"
+    ],
+    "potted houseplant": [
+      "a photo of a potted yucca plant",
+      "an indoor potted houseplant"
+    ],
+    "refrigerator": [
+      "a photo of a refrigerator",
+      "a kitchen fridge"
+    ],
+    "shower enclosure": [
+      "a photo of a shower enclosure",
+      "an indoor shower cabin"
+    ],
+    "storage cabinet": [
+      "a photo of a storage cabinet",
+      "an indoor storage cupboard"
+    ],
+    "table": [
+      "a photo of a table",
+      "an indoor household table"
+    ],
+    "teddy bear": [
+      "a photo of a teddy bear",
+      "a stuffed toy bear"
+    ],
+    "trash can": [
+      "a photo of a trash can",
+      "an indoor waste bin"
+    ],
+    "vase": [
+      "a photo of a vase",
+      "an indoor decorative vase"
+    ],
+    "wall oven": [
+      "a photo of a wall oven",
+      "a built-in kitchen oven"
+    ],
+    "washing machine": [
+      "a photo of a washing machine",
+      "a front-loading washing machine"
+    ],
+    "wooden chair": [
+      "a photo of a wooden chair",
+      "an indoor wooden dining chair"
+    ]
   },
-  "name_to_default_id": {
-    "table": 1,
+  "raw_name_to_id": {
+    "table_2": 1,
     "box": 2,
     "oven": 3,
     "desk": 4,
-    "chair": 5,
+    "chair_2": 5,
+    "chair_3": 6,
     "cabinet": 7,
     "trashcan": 8,
     "vase": 9,
     "clock": 10,
-    "crestwood": 11,
+    "crestwood_chair": 11,
     "ladder": 12,
     "lamp": 13,
-    "standard": 14,
-    "yucca": 15,
-    "teddy": 16
+    "standard_halfunit": 14,
+    "yucca_cane": 15,
+    "teddy": 16,
+    "dushevaia": 17,
+    "holodilnik": 18,
+    "plita": 19,
+    "stiralka": 20,
+    "vanna_korzina": 21,
+    "ventolator": 22
+  },
+  "name_to_ids": {
+    "table": [
+      1
+    ],
+    "box": [
+      2
+    ],
+    "wall oven": [
+      3
+    ],
+    "desk": [
+      4
+    ],
+    "chair": [
+      5,
+      6
+    ],
+    "storage cabinet": [
+      7
+    ],
+    "trash can": [
+      8
+    ],
+    "vase": [
+      9
+    ],
+    "clock": [
+      10
+    ],
+    "wooden chair": [
+      11
+    ],
+    "ladder": [
+      12
+    ],
+    "lamp": [
+      13
+    ],
+    "kitchen cabinet": [
+      14
+    ],
+    "potted houseplant": [
+      15
+    ],
+    "teddy bear": [
+      16
+    ],
+    "shower enclosure": [
+      17
+    ],
+    "refrigerator": [
+      18
+    ],
+    "kitchen stove": [
+      19
+    ],
+    "washing machine": [
+      20
+    ],
+    "laundry basket": [
+      21
+    ],
+    "electric fan": [
+      22
+    ]
+  },
+  "name_to_default_id": {
+    "table": 1,
+    "box": 2,
+    "wall oven": 3,
+    "desk": 4,
+    "chair": 5,
+    "storage cabinet": 7,
+    "trash can": 8,
+    "vase": 9,
+    "clock": 10,
+    "wooden chair": 11,
+    "ladder": 12,
+    "lamp": 13,
+    "kitchen cabinet": 14,
+    "potted houseplant": 15,
+    "teddy bear": 16,
+    "shower enclosure": 17,
+    "refrigerator": 18,
+    "kitchen stove": 19,
+    "washing machine": 20,
+    "laundry basket": 21,
+    "electric fan": 22
   }
 }

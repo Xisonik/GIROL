@@ -1,25 +1,31 @@
+from __future__ import annotations
+
 import json
 import os
 
 from isaaclab.assets import RigidObject, RigidObjectCfg
 import isaaclab.sim as sim_utils
 
+from .scene_item_config import read_object_transform
+
 
 class AssetManager:
     """Spawn exactly the physical instances declared in scene_items.json.
 
-    Room assignment is a per-reset logical property. Assets are therefore not
-    multiplied by the number of physical rooms.
+    This class owns USD spawning concerns: USD path, rigid/collision properties,
+    static asset rotation, scale and initial translation offset. Runtime scene
+    placement remains the responsibility of SceneManager.
     """
 
     def __init__(self, config_path: str):
-        with open(config_path, "r") as f:
-            cfg = json.load(f)
-        self.items = cfg["objects"]
-        self.prim_paths = {}
-        self.counts = {}
+        with open(config_path, "r", encoding="utf-8") as file:
+            cfg = json.load(file)
 
-    def _abs_paths(self, usd_paths):
+        self.items = cfg["objects"]
+        self.prim_paths: dict[str, list[str]] = {}
+        self.counts: dict[str, int] = {}
+
+    def _abs_paths(self, usd_paths: list[str]) -> list[str]:
         root = os.getcwd()
         return [
             os.path.join(
@@ -30,7 +36,8 @@ class AssetManager:
             for path in usd_paths
         ]
 
-    def _rigid_props_for(self, types: list[str]):
+    @staticmethod
+    def _rigid_props_for(types: list[str]):
         if "static_obstacle" in types or "movable_obstacle" in types:
             return sim_utils.RigidBodyPropertiesCfg(
                 rigid_body_enabled=True,
@@ -56,49 +63,54 @@ class AssetManager:
             count = int(obj["count"])
             if count < 0:
                 raise ValueError(f"Negative count for object {name!r}: {count}")
+
             usd_paths = self._abs_paths(obj["usd_paths"])
             if not usd_paths:
                 raise ValueError(f"Object {name!r} has no usd_paths")
 
+            transform = read_object_transform(obj)
             self.prim_paths[name] = []
             self.counts[name] = count
 
-            default_rot = (1.0, 0.0, 0.0, 0.0)
-            if name == "bowl":
-                default_rot = (0.0, 0.7071, 0.0, 0.7071)
+            is_collision_object = (
+                "movable_obstacle" in types
+                or "static_obstacle" in types
+            )
 
-            for i in range(count):
-                is_collision_object = (
-                    "movable_obstacle" in types
-                    or "static_obstacle" in types
-                )
+            for instance_id in range(count):
                 if is_collision_object:
-                    prim_path = f"/World/envs/env_0/obstacles/{name}_{i}"
+                    prim_path = (
+                        f"/World/envs/env_0/obstacles/{name}_{instance_id}"
+                    )
                 else:
-                    prim_path = f"/World/envs/env_0/{name}_{i}"
+                    prim_path = f"/World/envs/env_0/{name}_{instance_id}"
 
                 spawn_kwargs = {
                     "usd_path": usd_paths[0],
+                    "scale": transform.scale,
                     "rigid_props": self._rigid_props_for(types),
                     "activate_contact_sensors": False,
                 }
                 if is_collision_object:
                     spawn_kwargs["collision_props"] = (
-                        sim_utils.CollisionPropertiesCfg(collision_enabled=True)
+                        sim_utils.CollisionPropertiesCfg(
+                            collision_enabled=True
+                        )
                     )
-                spawn_cfg = sim_utils.UsdFileCfg(**spawn_kwargs)
 
+                spawn_cfg = sim_utils.UsdFileCfg(**spawn_kwargs)
+                parked_position = (
+                    (instance_id % 16 - 8) * 0.5 + transform.offset[0],
+                    (instance_id // 16 - 2) * 0.5 + transform.offset[1],
+                    -20.0 + transform.offset[2],
+                )
                 RigidObject(
                     RigidObjectCfg(
                         prim_path=prim_path,
                         spawn=spawn_cfg,
                         init_state=RigidObjectCfg.InitialStateCfg(
-                            pos=(
-                                (i % 16 - 8) * 0.5,
-                                (i // 16 - 2) * 0.5,
-                                -20.0,
-                            ),
-                            rot=default_rot,
+                            pos=parked_position,
+                            rot=transform.rotation_quat_wxyz,
                         ),
                     )
                 )

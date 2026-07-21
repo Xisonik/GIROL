@@ -5,7 +5,12 @@
       "info": {
         "color": "green",
         "add_info": [],
-        "position": []
+        "position": [],
+        "semantic_name": "table",
+        "clip_prompts": [
+          "a photo of a table",
+          "an indoor household table"
+        ]
       },
       "type": [
         "static_obstacle",
@@ -21,7 +26,24 @@
       "usd_paths": [
         "scenes/scenes_sber_kitchen_for_BBQ/table/table_2.usd"
       ],
-      "id": 1
+      "id": 1,
+      "transform": {
+        "rotation_deg": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "offset": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      }
     },
     {
       "_comment1": "Error: True",
@@ -29,7 +51,12 @@
       "info": {
         "color": "yellow",
         "add_info": [],
-        "position": []
+        "position": [],
+        "semantic_name": "box",
+        "clip_prompts": [
+          "a photo of a box",
+          "a storage box"
+        ]
       },
       "type": [
         "movable_obstacle"
@@ -43,7 +70,24 @@
       "usd_paths": [
         "scenes/obstacles/box.usd"
       ],
-      "id": 2
+      "id": 2,
+      "transform": {
+        "rotation_deg": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          0.025,
+          0.025,
+          0.025
+        ],
+        "offset": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      }
     },
     {
       "_comment1": "Error: False",
@@ -51,7 +95,12 @@
       "info": {
         "color": "yellow",
         "add_info": [],
-        "position": []
+        "position": [],
+        "semantic_name": "wall oven",
+        "clip_prompts": [
+          "a photo of a wall oven",
+          "a built-in kitchen oven"
+        ]
       },
       "type": [
         "staff_obstacle"
@@ -65,14 +114,36 @@
       "usd_paths": [
         "scenes/obstacles/wall_oven.usd"
       ],
-      "id": 3
+      "id": 3,
+      "transform": {
+        "rotation_deg": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "offset": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      }
     },
     {
       "name": "desk",
       "info": {
         "color": "gray",
         "add_info": [],
-        "position": []
+        "position": [],
+        "semantic_name": "desk",
+        "clip_prompts": [
+          "a photo of a desk",
+          "an indoor office desk"
+        ]
       },
       "type": [
         "staff_obstacle"
@@ -86,14 +157,36 @@
       "usd_paths": [
         "scenes/scenes_sber_kitchen_for_BBQ/table/table.usd"
       ],
-      "id": 4
+      "id": 4,
+      "transform": {
+        "rotation_deg": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "offset": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      }
     },
     {
       "name": "chair_2",
       "info": {
         "color": "orange",
         "add_info": [],
-        "position": []
+        "position": [],
+        "semantic_name": "chair",
+        "clip_prompts": [
+          "a photo of a chair",
+          "an indoor dining chair"
+        ]
       },
       "type": [
         "staff_obstacle"
@@ -107,14 +200,36 @@
       "usd_paths": [
         "scenes/obstacles/chair2.usd"
       ],
-      "id": 5
+      "id": 5,
+      "transform": {
+        "rotation_deg": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "offset": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      }
     },
     {
       "name": "chair_3",
       "info": {
         "color": "red",
         "add_info": [],
-        "position": []
+        "position": [],
+        "semantic_name": "chair",
+        "clip_prompts": [
+          "a photo of a chair",
+          "an indoor dining chair"
+        ]
       },
       "type": [
         "movable_obstacle"
@@ -128,7 +243,24 @@
       "usd_paths": [
         "scenes/obstacles/chair3.usd"
       ],
-      "id": 6
+      "id": 6,
+      "transform": {
+        "rotation_deg": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "offset": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      }
     },
     {
       "_comment1": "Error: True",
@@ -136,7 +268,12 @@
       "info": {
         "color": "brown",
         "add_info": [],
-        "position": []
+        "position": [],
+        "semantic_name": "storage cabinet",
+        "clip_prompts": [
+          "a photo of a storage cabinet",
+          "an indoor storage cupboard"
+        ]
       },
       "type": [
         "movable_obstacle"
@@ -150,7 +287,24 @@
       "usd_paths": [
         "scenes/obstacles/cabinet.usd"
       ],
-      "id": 7
+      "id": 7,
+      "transform": {
+        "rotation_deg": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "offset": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      }
     },
     {
       "_comment1": "Error: False",
@@ -158,7 +312,12 @@
       "info": {
         "color": "black",
         "add_info": [],
-        "position": []
+        "position": [],
+        "semantic_name": "trash can",
+        "clip_prompts": [
+          "a photo of a trash can",
+          "an indoor waste bin"
+        ]
       },
       "type": [
         "staff_obstacle"
@@ -172,7 +331,24 @@
       "usd_paths": [
         "scenes/obstacles/TrashCan.usd"
       ],
-      "id": 8
+      "id": 8,
+      "transform": {
+        "rotation_deg": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "offset": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      }
     },
     {
       "_comment1": "Error: False",
@@ -180,7 +356,12 @@
       "info": {
         "color": "yellow",
         "add_info": [],
-        "position": []
+        "position": [],
+        "semantic_name": "vase",
+        "clip_prompts": [
+          "a photo of a vase",
+          "an indoor decorative vase"
+        ]
       },
       "type": [
         "staff_obstacle"
@@ -194,7 +375,24 @@
       "usd_paths": [
         "scenes/obstacles/vase.usd"
       ],
-      "id": 9
+      "id": 9,
+      "transform": {
+        "rotation_deg": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "offset": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      }
     },
     {
       "_comment1": "Error: True",
@@ -202,7 +400,12 @@
       "info": {
         "color": "brown",
         "add_info": [],
-        "position": []
+        "position": [],
+        "semantic_name": "clock",
+        "clip_prompts": [
+          "a photo of a clock",
+          "an indoor wall clock"
+        ]
       },
       "type": [
         "staff_obstacle"
@@ -216,7 +419,24 @@
       "usd_paths": [
         "scenes/obstacles/clock.usd"
       ],
-      "id": 10
+      "id": 10,
+      "transform": {
+        "rotation_deg": [
+          0.0,
+          0.0,
+          -90.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "offset": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      }
     },
     {
       "_comment1": "Error: False",
@@ -224,7 +444,12 @@
       "info": {
         "color": "red",
         "add_info": [],
-        "position": []
+        "position": [],
+        "semantic_name": "wooden chair",
+        "clip_prompts": [
+          "a photo of a wooden chair",
+          "an indoor wooden dining chair"
+        ]
       },
       "type": [
         "staff_obstacle"
@@ -238,7 +463,24 @@
       "usd_paths": [
         "scenes/obstacles/Crestwood_Chair.usd"
       ],
-      "id": 11
+      "id": 11,
+      "transform": {
+        "rotation_deg": [
+          0.0,
+          0.0,
+          90.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "offset": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      }
     },
     {
       "_comment1": "Error: False",
@@ -246,7 +488,12 @@
       "info": {
         "color": "yellow",
         "add_info": [],
-        "position": []
+        "position": [],
+        "semantic_name": "ladder",
+        "clip_prompts": [
+          "a photo of a ladder",
+          "an indoor step ladder"
+        ]
       },
       "type": [
         "staff_obstacle"
@@ -260,7 +507,24 @@
       "usd_paths": [
         "scenes/obstacles/ladder.usd"
       ],
-      "id": 12
+      "id": 12,
+      "transform": {
+        "rotation_deg": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "offset": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      }
     },
     {
       "_comment1": "Error: True",
@@ -268,7 +532,12 @@
       "info": {
         "color": "white",
         "add_info": [],
-        "position": []
+        "position": [],
+        "semantic_name": "lamp",
+        "clip_prompts": [
+          "a photo of a lamp",
+          "an indoor household lamp"
+        ]
       },
       "type": [
         "staff_obstacle"
@@ -282,7 +551,24 @@
       "usd_paths": [
         "scenes/obstacles/lamp.usd"
       ],
-      "id": 13
+      "id": 13,
+      "transform": {
+        "rotation_deg": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "offset": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      }
     },
     {
       "_comment1": "Error: True",
@@ -290,7 +576,12 @@
       "info": {
         "color": "white",
         "add_info": [],
-        "position": []
+        "position": [],
+        "semantic_name": "kitchen cabinet",
+        "clip_prompts": [
+          "a photo of a kitchen cabinet",
+          "a kitchen base cabinet"
+        ]
       },
       "type": [
         "staff_obstacle"
@@ -304,7 +595,24 @@
       "usd_paths": [
         "scenes/obstacles/Standard_HalfUnit.usd"
       ],
-      "id": 14
+      "id": 14,
+      "transform": {
+        "rotation_deg": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "offset": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      }
     },
     {
       "_comment1": "Error: True",
@@ -312,7 +620,12 @@
       "info": {
         "color": "green",
         "add_info": [],
-        "position": []
+        "position": [],
+        "semantic_name": "potted houseplant",
+        "clip_prompts": [
+          "a photo of a potted yucca plant",
+          "an indoor potted houseplant"
+        ]
       },
       "type": [
         "staff_obstacle"
@@ -326,14 +639,36 @@
       "usd_paths": [
         "scenes/obstacles/YuccaCane.usd"
       ],
-      "id": 15
+      "id": 15,
+      "transform": {
+        "rotation_deg": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "offset": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      }
     },
     {
       "name": "teddy",
       "info": {
         "color": "yellow",
         "add_info": [],
-        "position": []
+        "position": [],
+        "semantic_name": "teddy bear",
+        "clip_prompts": [
+          "a photo of a teddy bear",
+          "a stuffed toy bear"
+        ]
       },
       "type": [
         "possible_goal",
@@ -348,7 +683,282 @@
       "usd_paths": [
         "scenes/obstacles/teddy.usd"
       ],
-      "id": 16
+      "id": 16,
+      "transform": {
+        "rotation_deg": [
+          0.0,
+          0.0,
+          90.0
+        ],
+        "scale": [
+          0.025,
+          0.025,
+          0.025
+        ],
+        "offset": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    {
+      "name": "dushevaia",
+      "info": {
+        "semantic_name": "shower enclosure",
+        "color": "white",
+        "add_info": [],
+        "position": [],
+        "clip_prompts": [
+          "a photo of a shower enclosure",
+          "an indoor shower cabin"
+        ]
+      },
+      "type": [
+        "staff_obstacle"
+      ],
+      "count": 1,
+      "size": [
+        0.4,
+        0.4,
+        0.9
+      ],
+      "usd_paths": [
+        "scenes/scenes_sber_kitchen_for_BBQ/3room/dushevaia/dushevaia.usd"
+      ],
+      "id": 17,
+      "transform": {
+        "rotation_deg": [
+          90.0,
+          0.0,
+          90.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "offset": [
+          0.0,
+          0.0,
+          1.5
+        ]
+      }
+    },
+    {
+      "name": "holodilnik",
+      "info": {
+        "semantic_name": "refrigerator",
+        "color": "white",
+        "add_info": [],
+        "position": [],
+        "clip_prompts": [
+          "a photo of a refrigerator",
+          "a kitchen fridge"
+        ]
+      },
+      "type": [
+        "staff_obstacle"
+      ],
+      "count": 1,
+      "size": [
+        0.4,
+        0.4,
+        0.9
+      ],
+      "usd_paths": [
+        "scenes/scenes_sber_kitchen_for_BBQ/3room/holodilnik/holodilnik.usd"
+      ],
+      "id": 18,
+      "transform": {
+        "rotation_deg": [
+          90.0,
+          0.0,
+          90.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "offset": [
+          0.0,
+          0.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "name": "plita",
+      "info": {
+        "semantic_name": "kitchen stove",
+        "color": "black",
+        "add_info": [],
+        "position": [],
+        "clip_prompts": [
+          "a photo of a kitchen stove",
+          "an indoor cooking stove"
+        ]
+      },
+      "type": [
+        "staff_obstacle"
+      ],
+      "count": 1,
+      "size": [
+        0.4,
+        0.4,
+        0.9
+      ],
+      "usd_paths": [
+        "scenes/scenes_sber_kitchen_for_BBQ/3room/plita/plita.usd"
+      ],
+      "id": 19,
+      "transform": {
+        "rotation_deg": [
+          90.0,
+          0.0,
+          90.0
+        ],
+        "scale": [
+          0.6,
+          0.6,
+          0.6
+        ],
+        "offset": [
+          0.0,
+          0.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "name": "stiralka",
+      "info": {
+        "semantic_name": "washing machine",
+        "color": "white",
+        "add_info": [],
+        "position": [],
+        "clip_prompts": [
+          "a photo of a washing machine",
+          "a front-loading washing machine"
+        ]
+      },
+      "type": [
+        "staff_obstacle"
+      ],
+      "count": 1,
+      "size": [
+        0.4,
+        0.4,
+        0.9
+      ],
+      "usd_paths": [
+        "scenes/scenes_sber_kitchen_for_BBQ/3room/stiralka/stiralka.usd"
+      ],
+      "id": 20,
+      "transform": {
+        "rotation_deg": [
+          90.0,
+          0.0,
+          90.0
+        ],
+        "scale": [
+          0.6,
+          0.6,
+          0.6
+        ],
+        "offset": [
+          0.0,
+          0.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "name": "vanna_korzina",
+      "info": {
+        "semantic_name": "laundry basket",
+        "color": "gray",
+        "add_info": [],
+        "position": [],
+        "clip_prompts": [
+          "a photo of a laundry basket",
+          "an indoor clothes basket"
+        ]
+      },
+      "type": [
+        "movable_obstacle"
+      ],
+      "count": 1,
+      "size": [
+        0.4,
+        0.4,
+        0.9
+      ],
+      "usd_paths": [
+        "scenes/scenes_sber_kitchen_for_BBQ/3room/vanna_korzina/vanna_korzina.usd"
+      ],
+      "id": 21,
+      "transform": {
+        "rotation_deg": [
+          90.0,
+          0.0,
+          90.0
+        ],
+        "scale": [
+          0.6,
+          0.6,
+          0.6
+        ],
+        "offset": [
+          0.0,
+          0.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "name": "ventolator",
+      "info": {
+        "semantic_name": "electric fan",
+        "color": "gray",
+        "add_info": [],
+        "position": [],
+        "clip_prompts": [
+          "a photo of an electric fan",
+          "an indoor household fan"
+        ]
+      },
+      "type": [
+        "staff_obstacle"
+      ],
+      "count": 1,
+      "size": [
+        0.4,
+        0.4,
+        0.9
+      ],
+      "usd_paths": [
+        "scenes/scenes_sber_kitchen_for_BBQ/3room/ventolator/ventolator.usd"
+      ],
+      "id": 22,
+      "transform": {
+        "rotation_deg": [
+          90.0,
+          0.0,
+          90.0
+        ],
+        "scale": [
+          0.6,
+          0.6,
+          0.6
+        ],
+        "offset": [
+          0.0,
+          0.0,
+          1.0
+        ]
+      }
     }
   ],
   "type_placements": {

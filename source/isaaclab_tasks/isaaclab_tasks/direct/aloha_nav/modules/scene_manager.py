@@ -38,6 +38,8 @@ from tabulate import tabulate
 import importlib.util
 
 from .room_geometry import RoomCoordinateMapper
+from .scene_item_config import read_object_transform
+from .wall_orientation import WallAwareObjectOrienter
 
 # =====================
 # Placement strategies
@@ -607,8 +609,9 @@ class BlockLayoutSampler:
     ) -> str | None:
         """Return why a floor candidate is invalid, or ``None`` if valid.
 
-        Collision checks use circular XY footprints and work across every grid
-        used by the semantic block.
+        ``candidate_position`` is the final root position after applying the
+        object-specific XYZ offset. Collision checks therefore match the pose
+        that will be written to the simulator.
         """
         object_radius = float(self.m.radii[0, object_idx].item())
         candidate_xy = candidate_position[:2]
@@ -682,8 +685,12 @@ class BlockLayoutSampler:
             rejection_log: list[str] = []
 
             for cell_idx in candidate_cells:
-                position = self.m.room_mapper.local_to_global(
+                anchor_position = self.m.room_mapper.local_to_global(
                     local_grid[cell_idx], room_id
+                )
+                position = (
+                    anchor_position
+                    + self.m.position_offsets[0, object_idx]
                 )
                 reason = self._candidate_rejection_reason(
                     env_id=env_id,
@@ -740,6 +747,7 @@ class BlockLayoutSampler:
         goal_pos = parent_pos.clone()
         # Preserve the existing project's USD-origin convention.
         goal_pos[2] = parent_pos[2] + parent_size[2] + goal_size[2] * 0.5
+        goal_pos = goal_pos + self.m.position_offsets[0, goal_idx]
         self.m.positions[env_id, goal_idx] = goal_pos
         self.m.active[env_id, goal_idx] = True
         self.m.object_room_ids[env_id, goal_idx] = room_id
@@ -863,6 +871,7 @@ class BlockLayoutSampler:
         )
         self.m.active[env_ids] = False
         self.m.positions[env_ids] = self.m.default_positions[env_ids]
+        self.m.orientations[env_ids] = self.m.default_orientations[env_ids]
         self.m.object_room_ids[env_ids] = -1
         self.m.on_surface_idx[env_ids] = -1
         self.m.surface_level[env_ids] = 0
@@ -922,6 +931,7 @@ class BlockLayoutSampler:
                     f"No navigation goal was placed in env {env_id}"
                 )
 
+        self.m.update_object_orientations(env_ids)
         self.m.chose_active_goal_state(
             env_ids,
             selected_goal_indices=selected_goal_indices,
@@ -963,6 +973,12 @@ class SceneManager:
             dtype=torch.long,
             device=self.device,
         )
+        self.object_orienter = WallAwareObjectOrienter(
+            device=self.device,
+            room_centers=self.room_mapper.centers,
+            room_half_extent=self.room_mapper.subroom_half_extent,
+            config=layout_rules.get('object_orientation', {}),
+        )
 
         self.colors_dict = {
             'red':[1,0,0], 'green':[0,1,0], 'blue':[0,0,1],
@@ -995,6 +1011,20 @@ class SceneManager:
         self.sizes = torch.zeros(
             1, self.num_total_objects, 3, device=self.device
         )
+        self.scales = torch.ones(
+            1, self.num_total_objects, 3, device=self.device
+        )
+        self.position_offsets = torch.zeros(
+            1, self.num_total_objects, 3, device=self.device
+        )
+        self.base_orientations = torch.zeros(
+            1, self.num_total_objects, 4, device=self.device
+        )
+        self.base_orientations[..., 0] = 1.0
+        self.orientations = torch.zeros(
+            self.num_envs, self.num_total_objects, 4, device=self.device
+        )
+        self.orientations[..., 0] = 1.0
         self.radii = torch.zeros(
             1, self.num_total_objects, device=self.device
         )
@@ -1067,6 +1097,11 @@ class SceneManager:
         return {
             "positions": self.positions,
             "sizes": self.sizes.expand(self.num_envs, -1, -1),
+            "scales": self.scales.expand(self.num_envs, -1, -1),
+            "position_offsets": self.position_offsets.expand(
+                self.num_envs, -1, -1
+            ),
+            "orientations": self.orientations,
             "radii": self.radii.expand(self.num_envs, -1),
             "active": self.active,
             "on_surface_idx": self.on_surface_idx,
@@ -1079,31 +1114,51 @@ class SceneManager:
 
 
     # ----------- Фиксированная раскладка -----------
-    def apply_fixed_positions(self, env_ids: torch.Tensor, positions_config: List[dict]):
+    def apply_fixed_positions(
+        self,
+        env_ids: torch.Tensor,
+        positions_config: List[dict],
+    ):
+        env_ids = torch.as_tensor(
+            env_ids, device=self.device, dtype=torch.long
+        )
         self.active[env_ids] = False
         self.positions[env_ids] = self.default_positions[env_ids]
+        self.orientations[env_ids] = self.default_orientations[env_ids]
         self.object_room_ids[env_ids] = -1
         self.on_surface_idx[env_ids] = -1
         self.surface_level[env_ids] = 0
+
         scene_data = self.get_scene_data_dict()
         for env_id in env_ids:
-            env_dict = positions_config[env_id.item()]
+            env_index = int(env_id.item())
+            env_dict = positions_config[env_index]
             for obj_name, pos_list in env_dict.items():
                 if obj_name not in self.object_map:
                     continue
                 indices = self.object_map[obj_name]["indices"]
-                for i, pos in enumerate(pos_list):
-                    if i >= len(indices):
+                for instance_id, pos in enumerate(pos_list):
+                    if instance_id >= len(indices):
                         print("[WARN] Too many instances for", obj_name)
                         break
-                    scene_data["positions"][env_id.item(), indices[i]] = torch.tensor(pos, device=self.device)
-                    scene_data["active"][env_id.item(), indices[i]] = True
+                    object_idx = indices[instance_id]
+                    anchor_position = torch.tensor(
+                        pos, device=self.device, dtype=torch.float32
+                    )
+                    position = (
+                        anchor_position
+                        + self.position_offsets[0, object_idx]
+                    )
+                    scene_data["positions"][env_index, object_idx] = position
+                    scene_data["active"][env_index, object_idx] = True
                     room_id = self.room_mapper.room_ids_from_positions(
-                        torch.tensor(pos[:2], device=self.device).view(1, 2)
+                        position[:2].view(1, 2)
                     )[0]
-                    self.object_room_ids[env_id.item(), indices[i]] = room_id
-                    scene_data["on_surface_idx"][env_id.item(), indices[i]] = -1
-                    scene_data["surface_level"][env_id.item(), indices[i]] = 0
+                    self.object_room_ids[env_index, object_idx] = room_id
+                    scene_data["on_surface_idx"][env_index, object_idx] = -1
+                    scene_data["surface_level"][env_index, object_idx] = 0
+
+        self.update_object_orientations(env_ids)
         self.chose_active_goal_state(env_ids)
         self.graph.refresh()
 
@@ -1167,11 +1222,35 @@ class SceneManager:
             seen_ids.add(object_id)
             self.object_ids[0, indices] = float(object_id)
 
+            transform = read_object_transform(obj_cfg)
+            scale_tensor = torch.tensor(
+                transform.scale,
+                device=self.device,
+                dtype=torch.float32,
+            )
+            base_quat_tensor = torch.tensor(
+                transform.rotation_quat_wxyz,
+                device=self.device,
+                dtype=torch.float32,
+            )
+            offset_tensor = torch.tensor(
+                transform.offset,
+                device=self.device,
+                dtype=torch.float32,
+            )
+
+            self.scales[0, indices] = scale_tensor
+            self.position_offsets[0, indices] = offset_tensor
+            self.base_orientations[0, indices] = base_quat_tensor
+
             self.object_map[name] = {
                 'indices': indices,
                 'types': types,
                 'count': count,
                 'id': object_id,
+                'scale': transform.scale,
+                'offset': transform.offset,
+                'base_orientation': transform.rotation_quat_wxyz,
             }
             for type_str in types:
                 self.type_map[type_str].extend(indices.tolist())
@@ -1179,11 +1258,29 @@ class SceneManager:
             for instance_id in range(count):
                 self.names.append(f"{name}_{instance_id}")
 
-            size_tensor = torch.tensor(
-                obj_cfg['size'], device=self.device, dtype=torch.float32
+            base_size_tensor = torch.tensor(
+                obj_cfg['size'],
+                device=self.device,
+                dtype=torch.float32,
             )
-            self.sizes[0, indices] = size_tensor
-            self.radii[0, indices] = torch.norm(size_tensor[:2] / 2)
+            if base_size_tensor.shape != (3,):
+                raise ValueError(
+                    f"Object {name!r}: size must be [x, y, z], "
+                    f"got {obj_cfg['size']!r}"
+                )
+            if torch.any(base_size_tensor <= 0):
+                raise ValueError(
+                    f"Object {name!r}: size components must be positive, "
+                    f"got {obj_cfg['size']!r}"
+                )
+
+            # ``size`` describes the model at scale 1.0. Keep logical geometry
+            # consistent with the USD scale used by AssetManager.
+            scaled_size_tensor = base_size_tensor * scale_tensor
+            self.sizes[0, indices] = scaled_size_tensor
+            self.radii[0, indices] = torch.norm(
+                scaled_size_tensor[:2] / 2
+            )
             start_idx += count
 
         if start_idx != self.num_total_objects:
@@ -1201,8 +1298,30 @@ class SceneManager:
         self.num_types = len(self.type_vocab)
         self.default_positions = default_pos_tensor.expand(
             self.num_envs, -1, -1
-        )
+        ).clone()
         self.positions = self.default_positions.clone()
+
+        self.default_orientations = self.base_orientations.expand(
+            self.num_envs, -1, -1
+        ).clone()
+        self.orientations = self.default_orientations.clone()
+
+    @torch.no_grad()
+    def update_object_orientations(self, env_ids: torch.Tensor) -> None:
+        """Apply the configured placement-dependent orientation policy.
+
+        Static USD correction rotations remain owned by scene_items.json.
+        Wall-facing behavior is delegated to WallAwareObjectOrienter.
+        """
+        env_ids = torch.as_tensor(
+            env_ids, device=self.device, dtype=torch.long
+        )
+        self.orientations[env_ids] = self.object_orienter.compute(
+            positions=self.positions[env_ids],
+            active=self.active[env_ids],
+            room_ids=self.object_room_ids[env_ids],
+            base_orientations=self.default_orientations[env_ids],
+        )
 
     def _initialize_strategies(self):
         strategies_by_type = {}
@@ -1683,6 +1802,9 @@ class SceneManager:
             # Перемещаем в default
             default_pos = self.default_positions[env_batch_idx, obs_indices_sel]
             self.positions[env_batch_idx, obs_indices_sel] = default_pos
+            self.orientations[env_batch_idx, obs_indices_sel] = (
+                self.default_orientations[env_batch_idx, obs_indices_sel]
+            )
             
             # Лог (опционально, для дебага)
             # print(f"[COLL DEBUG] Deactivated {coll_mask.sum().item()} obstacles in envs {env_ids.tolist()}")

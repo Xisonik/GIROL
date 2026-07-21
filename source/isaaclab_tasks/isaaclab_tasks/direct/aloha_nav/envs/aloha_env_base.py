@@ -1268,96 +1268,89 @@ class BaseWheeledRobotEnv(DirectRLEnv):
         super().close()
 
     def _update_scene_objects(self, env_ids: torch.Tensor):
-        """Векторизованное обновление позиций всех объектов в симуляторе."""
+        """Write SceneManager positions and orientations to the simulator.
+
+        USD-specific rotation and scale are parsed from scene_items.json.
+        Placement-dependent orientation is computed by SceneManager. This
+        method only converts local positions to world positions and writes the
+        resulting root poses; it contains no object-name special cases.
+        """
         if env_ids is None:
             env_ids = self._robot._ALL_INDICES.clone()
-        # Получаем все локальные позиции из scene_manager'а
+        env_ids = torch.as_tensor(
+            env_ids, device=self.device, dtype=torch.long
+        )
+
         all_local_positions = self.scene_manager.positions
-        
-        # Конвертируем в глобальные координаты
-        env_origins_expanded = self._terrain.env_origins.unsqueeze(1).expand_as(all_local_positions)
-        all_global_positions = all_local_positions + env_origins_expanded
-        
-        # Создаем тензор для ориентации (по умолчанию Y-up: w=1)
-        all_quats = torch.zeros(self.num_envs, self.scene_manager.num_total_objects, 4, device=self.device)
-        all_quats[..., 0] = 1.0
-        
-        # Собираем полные состояния (поза + ориентация)
-        all_root_states = torch.cat([all_global_positions, all_quats], dim=-1)
-        
-        # Итерируемся по объектам, управляемым симулятором
+        env_origins_expanded = (
+            self._terrain.env_origins.unsqueeze(1).expand_as(
+                all_local_positions
+            )
+        )
+        all_global_positions = (
+            all_local_positions + env_origins_expanded
+        )
+        all_root_poses = torch.cat(
+            [
+                all_global_positions,
+                self.scene_manager.orientations,
+            ],
+            dim=-1,
+        )
+
         for name, object_instances in self.scene_objects.items():
-            if name not in self.scene_manager.object_map:
+            object_meta = self.scene_manager.object_map.get(name)
+            if object_meta is None:
                 continue
-            
-            # Получаем индексы для данного типа объектов
-            indices = self.scene_manager.object_map[name]['indices']
-            
-            # Собираем состояния только для этих объектов
-            object_root_states = all_root_states[:, indices, :]
-            
-            # Обновляем каждый экземпляр этого типа
-            for i, instance in enumerate(object_instances):
-                # Выбираем срез для i-го экземпляра по всем окружениям
-                instance_states = object_root_states[:, i, :]
-                # Применяем маску: неактивные объекты берём из default_positions
-                active_mask = self.scene_manager.active[:, indices[i]]
-                # Используем дефолтные позиции из SceneManager
-                inactive_pos = self.scene_manager.default_positions[0, indices[i]]  # (3,)
-                inactive_pos = inactive_pos.expand(self.num_envs, -1)  # (num_envs, 3)
-                # Конвертируем в глобальные координаты
-                inactive_pos_global = inactive_pos + env_origins_expanded[:, indices[i], :]
-                # Векторизованное обновление позиций
-                final_positions = torch.where(
+
+            indices = object_meta["indices"]
+            if len(object_instances) != len(indices):
+                raise RuntimeError(
+                    f"Scene object count mismatch for {name!r}: "
+                    f"{len(object_instances)} simulator views, "
+                    f"{len(indices)} SceneManager indices"
+                )
+
+            for instance_id, instance in enumerate(object_instances):
+                object_idx = indices[instance_id]
+                instance_states = all_root_poses[:, object_idx].clone()
+                active_mask = self.scene_manager.active[:, object_idx]
+
+                inactive_local_pos = (
+                    self.scene_manager.default_positions[:, object_idx]
+                )
+                inactive_global_pos = (
+                    inactive_local_pos
+                    + self._terrain.env_origins
+                )
+                instance_states[:, :3] = torch.where(
                     active_mask.unsqueeze(-1),
                     instance_states[:, :3],
-                    inactive_pos_global
+                    inactive_global_pos,
                 )
-                instance_states[:, :3] = final_positions
-                if name == "bowl":
-                    rot = torch.tensor([0.0, 0.0, 0.7071, 0.7071], device=self.device).expand(self.num_envs, -1)
-                    instance_states[:, 3:7] = rot
-                if name == "cabinet":
-                    # --- параметры и данные сцены ---
-                    bounds = self.scene_manager.room_bounds  # {'x_min','x_max','y_min','y_max'}
-                    margin = 0.03  # небольшой отступ от стены (м)
-                    # размеры этого экземпляра во всех env (Bx3)
-                    inst_size = self.scene_manager.sizes.expand(self.num_envs, -1, -1)[:, indices[i]]  # [N, 3]
-                    half_x = inst_size[:, 0] * 0.5
-                    half_y = inst_size[:, 1] * 0.5
 
-                    # текущие (мировые) позиции для активных/неактивных уже собраны в instance_states[:, :3]
-                    states = self.to_local(instance_states)
-                    px = states[:, 0]
-                    py = states[:, 1]
+                inactive_quat = (
+                    self.scene_manager.default_orientations[:, object_idx]
+                )
+                instance_states[:, 3:7] = torch.where(
+                    active_mask.unsqueeze(-1),
+                    instance_states[:, 3:7],
+                    inactive_quat,
+                )
 
-                    # расстояния до 4 стен (без учёта размера/отступа — для выбора ближайшей)
-                    d_left   = (px - bounds['x_min']).abs()      # стена x_min
-                    d_right  = (bounds['x_max'] - px).abs()      # стена x_max
-                    d_bottom = (py - bounds['y_min']).abs()      # стена y_min
-                    d_top    = (bounds['y_max'] - py).abs()      # стена y_max
-
-                    # индекс ближайшей стены: 0=x_min, 1=x_max, 2=y_min, 3=y_max
-                    dists = torch.stack([d_left, d_right, d_bottom, d_top], dim=1)  # [N, 4]
-                    wall_idx = dists.argmin(dim=1)  # [N]
-                    mask_x_walls = (wall_idx == 0) | (wall_idx == 1)  # стены "вдоль Y" (x фикс)
-                    mask_y_walls = (wall_idx == 2) | (wall_idx == 3)  # стены "вдоль X" (y фикс)
-
-                    # кватернионы в (w, x, y, z)
-                    q_identity = torch.tensor([1.0, 0.0, 0.0, 0.0], device=self.device, dtype=instance_states.dtype)
-                    q_rot90z  = torch.tensor([0.7071, 0.0, 0.0, 0.7071], device=self.device, dtype=instance_states.dtype)
-
-                    # если по умолчанию шкаф ориентирован вдоль X,
-                    # то у "x-стен" (вдоль Y) — поверни на 90°; у "y-стен" — оставь identity
-                    if mask_x_walls.any():
-                        instance_states[mask_x_walls, 3:7] = q_identity.expand(mask_x_walls.sum(), 4)
-                    if mask_y_walls.any():
-                        instance_states[mask_y_walls, 3:7] = q_rot90z.expand(mask_y_walls.sum(), 4)
-
-                # Записываем состояния в симулятор
-                zero_vel = torch.zeros((env_ids.numel(), 6), device=self.device, dtype=instance_states.dtype)
-                instance.write_root_velocity_to_sim(zero_vel, env_ids=env_ids)
-                instance.write_root_pose_to_sim(instance_states[env_ids], env_ids=env_ids)
+                zero_velocity = torch.zeros(
+                    (env_ids.numel(), 6),
+                    device=self.device,
+                    dtype=instance_states.dtype,
+                )
+                instance.write_root_velocity_to_sim(
+                    zero_velocity,
+                    env_ids=env_ids,
+                )
+                instance.write_root_pose_to_sim(
+                    instance_states[env_ids],
+                    env_ids=env_ids,
+                )
 
     def step(self, action: torch.Tensor):
         obs_buf, reward_buf, reset_terminated, reset_time_outs, extras = super().step(action)

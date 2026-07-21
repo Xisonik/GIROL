@@ -5,7 +5,7 @@
     "task_name": "Aloha_nav_hab_wr",
     "seed": 42,
     "num_envs": 32,
-    "headless": true,
+    "headless": false,
     "video": false,
     "eval": false,
     "folder": "debug",

@@ -31,7 +31,30 @@ if [[ ! -d "${REPO_ROOT}/source/isaaclab_assets" ]]; then
     exit 1
 fi
 
-mkdir -p "$TARGET_DIR"
+# Do not silently merge new assets with an existing directory.
+if [[ -e "$TARGET_DIR" ]]; then
+    echo "The target directory already exists:"
+    echo "  $TARGET_DIR"
+    echo
+    echo "Its current contents will be deleted completely."
+
+    if [[ ! -t 0 ]]; then
+        echo "Installation cancelled: confirmation requires an interactive terminal." >&2
+        exit 1
+    fi
+
+    read -r -p "Overwrite the existing directory? [y/N]: " CONFIRMATION
+
+    if [[ "$CONFIRMATION" == "y" || "$CONFIRMATION" == "Y" ]]; then
+        echo "Removing existing directory..."
+        rm -rf -- "$TARGET_DIR"
+    else
+        echo "Installation cancelled."
+        exit 0
+    fi
+fi
+
+mkdir -p -- "$TARGET_DIR"
 
 if ! command -v python3 >/dev/null 2>&1; then
     echo "Error: python3 is not installed or is not available in PATH." >&2
@@ -51,14 +74,17 @@ else
 fi
 
 TMP_DIR="$(mktemp -d)"
+
 cleanup() {
-    rm -rf "$TMP_DIR"
+    rm -rf -- "$TMP_DIR"
 }
+
 trap cleanup EXIT
 
 DOWNLOAD_DIR="${TMP_DIR}/drive_folder"
 EXTRACT_DIR="${TMP_DIR}/extracted"
-mkdir -p "$DOWNLOAD_DIR" "$EXTRACT_DIR"
+
+mkdir -p -- "$DOWNLOAD_DIR" "$EXTRACT_DIR"
 
 echo "[2/5] Downloading the GIROL Drive folder..."
 python3 -m gdown \
@@ -98,6 +124,7 @@ destination = Path(sys.argv[2]).resolve()
 with zipfile.ZipFile(archive_path) as archive:
     for member in archive.infolist():
         output_path = (destination / member.filename).resolve()
+
         try:
             output_path.relative_to(destination)
         except ValueError as exc:
@@ -115,6 +142,7 @@ mapfile -d '' TOP_LEVEL_ENTRIES < <(
 )
 
 SOURCE_DIR="$EXTRACT_DIR"
+
 if [[ ${#TOP_LEVEL_ENTRIES[@]} -eq 1 && -d "${TOP_LEVEL_ENTRIES[0]}" ]]; then
     SOURCE_DIR="${TOP_LEVEL_ENTRIES[0]}"
 fi
@@ -131,6 +159,7 @@ fi
 echo
 echo "GIROL assets installed successfully."
 echo "Destination: $TARGET_DIR"
+
 du -sh "$TARGET_DIR" 2>/dev/null || true
 
 echo
