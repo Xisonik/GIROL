@@ -28,6 +28,57 @@ Train navigation:
 ./isaaclab.sh -p scripts/algos/run_experiments.py
 ```
 
+### Configure checkpoints
+
+Use `scripts/algos/set_checkpoint_paths.py` to automatically update the checkpoint paths in an experiment configuration. The script fills:
+
+* `paths.agent_checkpoint`;
+* `paths.state_preprocessor_checkpoint`;
+* `paths.aux_checkpoint`.
+
+It reads `run.task_name` and `run.name` from the selected configuration, so only the configuration name and training run folder are required.
+
+Run from the repository root:
+
+```bash
+python scripts/algos/set_checkpoint_paths.py \
+  cur_dqn/ddqn_discrete.json \
+  07.21_16-26-19_cur_dqn
+```
+
+This resolves the checkpoint directory as:
+
+```text
+logs/skrl/Aloha_nav_hab_wr/07.21_16-26-19_cur_dqn/ddqn_discrete
+```
+
+To select checkpoints from a specific training step:
+
+```bash
+python scripts/algos/set_checkpoint_paths.py \
+  cur_dqn/ddqn_discrete.json \
+  07.21_16-26-19_cur_dqn \
+  1000
+```
+
+To override the complete path relative to `logs/skrl`:
+
+```bash
+python scripts/algos/set_checkpoint_paths.py \
+  cur_dqn/ddqn_discrete.json \
+  --p Aloha_nav_hab_wr/07.21_16-26-19_cur_dqn/ddqn_discrete
+```
+
+To reset all checkpoint paths to `null`:
+
+```bash
+python scripts/algos/set_checkpoint_paths.py \
+  cur_dqn/ddqn_discrete.json
+```
+
+When no training step is specified, the newest checkpoint files are selected automatically. If the agent, state preprocessor, or auxiliary checkpoint cannot be found, the script exits with an error and does not modify the configuration.
+
+
 Imitation learning:
 To generate paths via dijkstra algo (Check, that there no all_paths.json in data):
 ```
