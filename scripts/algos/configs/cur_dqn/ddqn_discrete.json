@@ -5,12 +5,12 @@
     "task_name": "Aloha_nav_hab_wr",
     "seed": 42,
     "num_envs": 32,
-    "headless": false,
+    "headless": true,
     "video": false,
     "eval": false,
     "folder": "debug",
     "write_interval": 10,
-    "checkpoint_interval": 1000,
+    "checkpoint_interval": 50,
     "timesteps": 2000000
   },
   "agent": {
