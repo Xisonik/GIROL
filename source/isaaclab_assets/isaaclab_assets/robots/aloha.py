@@ -33,8 +33,8 @@ ALOHA_CFG = ArticulationCfg(
         activate_contact_sensors=True,
         rigid_props=sim_utils.RigidBodyPropertiesCfg(
             rigid_body_enabled=True,
-            max_linear_velocity=100.0,
-            max_angular_velocity=100.0,
+            max_linear_velocity=5.0,     # was 100.0 — clamp to curb physics blow-ups (NaN robot poses)
+            max_angular_velocity=10.0,   # was 100.0 — turn task commands <=2 rad/s, so plenty of headroom
             max_depenetration_velocity=0.3,
             enable_gyroscopic_forces=False,
         ),

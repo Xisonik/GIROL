@@ -41,6 +41,7 @@ VIDEO = _env_flag("GIROL_VIDEO")
 USE_PRETRAINED = _env_flag("GIROL_USE_PRETRAINED")
 USE_GRAPH = _env_flag("GIROL_USE_GRAPH")            # policy conditions on graph_emb
 USE_METRIC = _env_flag("GIROL_USE_METRIC", "1")    # baseline=1 (metric graph); ablation=0
+USE_NONMETRIC = _env_flag("GIROL_NONMETRIC")       # 1 = room-aware qualitative encoder (non-metric study)
 USE_COMET = _env_flag("GIROL_USE_COMET")           # off by default (no external logging)
 num_envs = int(os.environ.get("GIROL_NUM_ENVS", "64"))
 timestepslen = int(os.environ.get("GIROL_TIMESTEPS", "100000"))
@@ -85,12 +86,21 @@ if VIDEO:
 env = wrap_env(env)
 device = env.device
 
-graph_encoder = GraphEncoder(
-    embeddings_path="source/isaaclab_tasks/isaaclab_tasks/direct/aloha_nav/text_embeddings.pt",
-    graphs_dir=None,          # compact 6-dim path is active; no JSON scene cache needed
-    env=env,
-    use_metric=USE_METRIC,    # baseline keeps object x,y,z; ablation zeros them
-).to(device)
+_EMB_PATH = "source/isaaclab_tasks/isaaclab_tasks/direct/aloha_nav/text_embeddings.pt"
+if USE_NONMETRIC:
+    # Room-aware qualitative (direction-only) encoder for the non-metric study.
+    from networks.nonmetric_graph_encoder import NonMetricGraphEncoder
+    print("[graph] using NonMetricGraphEncoder (room-aware, direction-only)")
+    graph_encoder = NonMetricGraphEncoder(
+        embeddings_path=_EMB_PATH, env=env, use_metric=USE_METRIC,
+    ).to(device)
+else:
+    graph_encoder = GraphEncoder(
+        embeddings_path=_EMB_PATH,
+        graphs_dir=None,          # compact 6-dim path is active; no JSON scene cache needed
+        env=env,
+        use_metric=USE_METRIC,    # baseline keeps object x,y,z; ablation zeros them
+    ).to(device)
 
 orient_module = OrientationModule(
     img_dim=env.observation_space["img"].shape[0],
@@ -190,7 +200,7 @@ aux_trainer = AuxModuleTrainer(
 # orientation module live outside the agent, so we save them ourselves.
 # Note: id_to_name_emb is a non-persistent buffer (rebuilt from text_embeddings.pt
 # on load), so these files stay small — only the learned weights + optimizers.
-AUX_SAVE_DIR = f"{LOG_ROOT}/aloha_sac/aux_checkpoints"
+AUX_SAVE_DIR = f"{LOG_ROOT}/aloha_sac/aux_checkpoints/{NAME}"   # per-run: no cross-run overwrite
 AUX_SAVE_INTERVAL = int(os.environ.get("GIROL_AUX_SAVE_INTERVAL", "2000"))
 
 def save_aux_modules(tag):

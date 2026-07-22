@@ -1,0 +1,13 @@
+{
+  "run": { "name": "hierarchical" },
+  "model": {
+    "modules": {
+      "graph_encoder": {
+        "class_path": "perception.hierarchical_graph_encoder.HierarchicalGraphEncoder",
+        "kwargs": {
+          "include_node_metric": false
+        }
+      }
+    }
+  }
+}

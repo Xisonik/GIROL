@@ -8,11 +8,15 @@
 # ablation re-runs the same command with GIROL_USE_METRIC=0.
 #
 # Usage:
-#   ./scripts/algos/launch_orientation_baseline.sh [NUM_ENVS] [TIMESTEPS]
+#   ./scripts/algos/launch_orientation_baseline.sh [NUM_ENVS] [TIMESTEPS] [gui]
 #
 # Examples:
-#   ./scripts/algos/launch_orientation_baseline.sh            # 4 envs, 100k steps
-#   ./scripts/algos/launch_orientation_baseline.sh 8 200000   # 8 envs, 200k steps
+#   ./scripts/algos/launch_orientation_baseline.sh            # 4 envs, 100k, headless
+#   ./scripts/algos/launch_orientation_baseline.sh 8 200000   # 8 envs, 200k, headless
+#   ./scripts/algos/launch_orientation_baseline.sh 2 100000 gui   # open the Isaac Sim window
+#
+# Pass 'gui' as the 3rd arg to open the Isaac Sim viewport and watch training live.
+# The GUI adds VRAM + slows training a lot, so use FEW envs (2-4) when watching.
 #
 # Prereqs (once):
 #   conda activate isaaclab45
@@ -31,6 +35,7 @@ cd "$REPO_ROOT"
 # headroom in `nvidia-smi`, raise to 8/16. If it OOMs, drop to 2.
 export GIROL_NUM_ENVS="${1:-4}"
 export GIROL_TIMESTEPS="${2:-100000}"
+MODE="${3:-headless}"              # 'gui' -> open the Isaac Sim window; anything else -> headless
 
 export GIROL_TASK="Aloha_nav"      # registered id (see aloha_nav/__init__.py)
 export GIROL_USE_METRIC="1"        # BASELINE: metric graph (x,y,z kept). Ablation -> 0
@@ -38,7 +43,11 @@ export GIROL_USE_GRAPH="0"         # policy uses gt-orientation+goal; graph feed
 export GIROL_EVAL="0"
 export GIROL_VIDEO="0"
 export GIROL_USE_PRETRAINED="0"
-export GIROL_HEADLESS="1"          # no GUI (training)
+if [ "$MODE" = "gui" ]; then
+    export GIROL_HEADLESS="0"      # open the Isaac Sim viewport (watch training live)
+else
+    export GIROL_HEADLESS="1"      # headless (fast training, no window)
+fi
 export GIROL_USE_COMET="0"         # no external logging; TensorBoard is written locally
 export GIROL_LOG_ROOT="logs/skrl"
 export GIROL_RUN_NAME="baseline_metric"
@@ -54,8 +63,9 @@ export ALOHA_NAV_ENV_CFG='{"TURN_TASK": true, "MAX_STAGE": 4}'
 # Keep the conda env hermetic (avoid ~/.local site-packages leaking in).
 export PYTHONNOUSERSITE="1"
 
-echo "[baseline] task=$GIROL_TASK num_envs=$GIROL_NUM_ENVS timesteps=$GIROL_TIMESTEPS"
+echo "[baseline] task=$GIROL_TASK num_envs=$GIROL_NUM_ENVS timesteps=$GIROL_TIMESTEPS headless=$GIROL_HEADLESS"
 echo "[baseline] use_metric=$GIROL_USE_METRIC use_graph=$GIROL_USE_GRAPH log_root=$GIROL_LOG_ROOT"
 echo "[baseline] TensorBoard: tensorboard --logdir $GIROL_LOG_ROOT/aloha_sac"
+[ "$MODE" = "gui" ] && echo "[baseline] GUI mode: Isaac Sim window will open (slower; use few envs)"
 
 exec ./isaaclab.sh -p scripts/algos/run_sac_ORM.py

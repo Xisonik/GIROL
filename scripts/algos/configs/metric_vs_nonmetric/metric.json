@@ -1,0 +1,12 @@
+{
+  "run": { "name": "metric" },
+  "model": {
+    "modules": {
+      "graph_encoder": {
+        "kwargs": {
+          "include_node_metric": true
+        }
+      }
+    }
+  }
+}

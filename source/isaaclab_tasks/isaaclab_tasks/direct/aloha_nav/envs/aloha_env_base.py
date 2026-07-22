@@ -251,7 +251,9 @@ class BaseWheeledRobotEnv(DirectRLEnv):
             self.use_controller = True
         if self.use_controller:
             self.path_manager = Path_manager(scene_manager=self.scene_manager, ratio=4.0, shift=[10, 10], device=self.device)
-            self.control_module = VectorizedPurePursuit(num_envs=self.num_envs, device=self.device)
+            # max_path_length must cover the densified expert paths (observed up to
+            # ~128 nodes; default 15 raised "Path length exceeds max_path_length").
+            self.control_module = VectorizedPurePursuit(num_envs=self.num_envs, device=self.device, max_path_length=512)
         self.scene_embeddings = torch.zeros(self.num_envs, 6*num_total_objects, device=self.device)
 
         self._actions = torch.zeros((self.num_envs, 2), device=self.device)
@@ -346,7 +348,9 @@ class BaseWheeledRobotEnv(DirectRLEnv):
             enabled=runtime_cfg.get("relative_yaw_noise", False),
         )
 
-        self.TURN_TASK = True   # turn-in-place task: robot rotates to face the goal
+        # Turn task on by default; set ALOHA_NAV_ENV_CFG='{"TURN_TASK": false}' for the
+        # navigation task (expert-driven), e.g. to test whether the robot simulates at all.
+        self.TURN_TASK = bool(env_get("TURN_TASK", True))
         if self.TURN_TASK:
             self.stage = 4          # fixed placement: spawn ±90° off the goal
             self.CL_ON = False      # no curriculum progression (stage stays 4)
@@ -579,8 +583,9 @@ class BaseWheeledRobotEnv(DirectRLEnv):
         # mask = torch.isnan(root_quat_w).any(dim=-1)
         # root_quat_w[mask] = base_quat
 
-        if torch.isnan(root_quat_w).any():
-            print("Oh Nooooooo")
+        _nan_envs = torch.isnan(root_quat_w).any(dim=-1)
+        if _nan_envs.any():
+            print(f"[NaN robot quat] {int(_nan_envs.sum().item())}/{root_quat_w.shape[0]} envs blew up")
         # Локальный вектор взгляда робота (вперёд по оси X)
         local_forward = torch.tensor([1.0, 0.0, 0.0], device=root_quat_w.device, dtype=root_quat_w.dtype)
         local_forward = local_forward.unsqueeze(0).repeat(root_quat_w.shape[0], 1)  # [N, 3]

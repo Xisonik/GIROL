@@ -12,7 +12,9 @@
     ],
     "active_rooms": [
       1,
-      2
+      2,
+      3,
+      4
     ],
     "outer_size": 20.0,
     "subroom_size": 10.0,
@@ -114,10 +116,7 @@
         "objects": [
           "oven",
           "clock",
-          "chair_2",
-          "vase",
-          "TrashCan",
-          "Crestwood_Chair"
+          "chair_2"
         ]
       },
       "goal": {
@@ -135,7 +134,7 @@
           "grid": "center_obstacle_grid",
           "object": "chair_3",
           "min_count": 0,
-          "max_count": 4
+          "max_count": 2
         }
       ]
     },
@@ -145,10 +144,7 @@
         "objects": [
           "cabinet",
           "lamp",
-          "desk",
-          "Standard_HalfUnit",
-          "Yucca_Cane",
-          "box"
+          "desk"
         ]
       },
       "goal": {
@@ -169,6 +165,48 @@
           "max_count": 1
         }
       ]
+    },
+    "storage": {
+      "staff": {
+        "grid": "staff_grid",
+        "objects": [
+          "Standard_HalfUnit",
+          "Yucca_Cane",
+          "box"
+        ]
+      },
+      "goal": {
+        "grid": "goals_grid",
+        "object": "teddy",
+        "surface_providers": [
+          {
+            "object": "table_2",
+            "count": 1
+          }
+        ]
+      },
+      "obstacles": []
+    },
+    "lounge": {
+      "staff": {
+        "grid": "staff_grid",
+        "objects": [
+          "vase",
+          "TrashCan",
+          "Crestwood_Chair"
+        ]
+      },
+      "goal": {
+        "grid": "goals_grid",
+        "object": "teddy",
+        "surface_providers": [
+          {
+            "object": "table_2",
+            "count": 1
+          }
+        ]
+      },
+      "obstacles": []
     }
   },
   "placement": {
