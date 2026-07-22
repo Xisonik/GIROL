@@ -13,8 +13,7 @@
     "active_rooms": [
       1,
       2,
-      3,
-      4
+      3
     ],
     "outer_size": 20.0,
     "subroom_size": 10.0,
@@ -45,6 +44,13 @@
     "passage_center": 3.0,
     "passage_width": 1.0
   },
+  "object_orientation": {
+    "enabled": true,
+    "forward_axis": "+x",
+    "wall_distance": 1.25,
+    "corner_mode": "towards_room_center",
+    "_help": "Objects whose final root position is within wall_distance meters of one room boundary point inward along that wall normal. Objects within the threshold of two or more boundaries point towards the room center. Outside the wall zone, transform.rotation_deg is preserved unchanged."
+  },
   "goal_mode": "selected_only",
   "_goal_mode_help": {
     "selected_only": "Only the randomly selected navigation goal is placed.",
@@ -53,21 +59,66 @@
   "grids": {
     "staff_grid": {
       "coordinates": [
-        [-3.8,  3.8, 0.0],
-        [-2,  3.8, 0.0],
-        [ 2,  3.8, 0.0],
-        [ 3.8,  3.8, 0.0],
-
-        [-3.8, -3.8, 0.0],
-        [-2, -3.8, 0.0],
-        [ 2, -3.8, 0.0],
-        [ 3.8, -3.8, 0.0],
-
-        [-3.8, -2, 0.0],
-        [-3.8,  2, 0.0],
-
-        [ 3.8, -2, 0.0],
-        [ 3.8,  2, 0.0]
+        [
+          -3.8,
+          3.8,
+          0.0
+        ],
+        [
+          -2,
+          3.8,
+          0.0
+        ],
+        [
+          2,
+          3.8,
+          0.0
+        ],
+        [
+          3.8,
+          3.8,
+          0.0
+        ],
+        [
+          -3.8,
+          -3.8,
+          0.0
+        ],
+        [
+          -2,
+          -3.8,
+          0.0
+        ],
+        [
+          2,
+          -3.8,
+          0.0
+        ],
+        [
+          3.8,
+          -3.8,
+          0.0
+        ],
+        [
+          -3.8,
+          -2,
+          0.0
+        ],
+        [
+          -3.8,
+          2,
+          0.0
+        ],
+        [
+          3.8,
+          -2,
+          0.0
+        ],
+        [
+          3.8,
+          2,
+          0.0
+        ]
       ]
     },
     "goals_grid": {
@@ -116,7 +167,10 @@
         "objects": [
           "oven",
           "clock",
-          "chair_2"
+          "chair_2",
+          "vase",
+          "TrashCan",
+          "Crestwood_Chair"
         ]
       },
       "goal": {
@@ -134,7 +188,7 @@
           "grid": "center_obstacle_grid",
           "object": "chair_3",
           "min_count": 0,
-          "max_count": 2
+          "max_count": 4
         }
       ]
     },
@@ -144,7 +198,10 @@
         "objects": [
           "cabinet",
           "lamp",
-          "desk"
+          "desk",
+          "Standard_HalfUnit",
+          "Yucca_Cane",
+          "box"
         ]
       },
       "goal": {
@@ -166,13 +223,15 @@
         }
       ]
     },
-    "storage": {
+    "bathroom": {
       "staff": {
         "grid": "staff_grid",
         "objects": [
-          "Standard_HalfUnit",
-          "Yucca_Cane",
-          "box"
+          "dushevaia",
+          "holodilnik",
+          "plita",
+          "stiralka",
+          "ventolator"
         ]
       },
       "goal": {
@@ -185,28 +244,14 @@
           }
         ]
       },
-      "obstacles": []
-    },
-    "lounge": {
-      "staff": {
-        "grid": "staff_grid",
-        "objects": [
-          "vase",
-          "TrashCan",
-          "Crestwood_Chair"
-        ]
-      },
-      "goal": {
-        "grid": "goals_grid",
-        "object": "teddy",
-        "surface_providers": [
-          {
-            "object": "table_2",
-            "count": 1
-          }
-        ]
-      },
-      "obstacles": []
+      "obstacles": [
+        {
+          "grid": "center_obstacle_grid",
+          "object": "vanna_korzina",
+          "min_count": 0,
+          "max_count": 1
+        }
+      ]
     }
   },
   "placement": {

@@ -118,7 +118,7 @@ class OrientationAuxTrainer:
         self.graph_encoder.eval()
         self.orientation_module.eval()
 
-        if timestep % self.log_interval == 0:
+        if timestep % 5000 == 0:
             self._print_metrics(timestep)
 
         if self.save_interval > 0 and timestep % self.save_interval == 0:

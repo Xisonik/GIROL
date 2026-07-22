@@ -9,7 +9,7 @@ metadata, while coordinates are required to derive edge relations. They are not
 necessarily used as learned node features.
 
 Learned node interface (configurable):
-    always: object name embedding, object color embedding
+    always: object semantic-name embedding from a cached CLIP prompt ensemble
     optional: metric XYZ embedding            (include_node_metric=True)
     optional: is_goal embedding                (include_node_is_goal=True)
 
@@ -37,6 +37,7 @@ from __future__ import annotations
 import glob
 import json
 import os
+import re
 from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Hashable, Optional
@@ -53,7 +54,7 @@ from torch_geometric.nn import (
 from torch_geometric.utils import softmax
 
 
-NUM_GRAPH_NODES = 21
+NUM_GRAPH_NODES = 28
 PER_OBJECT_DIM = 6
 GRAPH_EMB_DIM = 128
 
@@ -128,11 +129,12 @@ EDGE_KIND_SELF = 2
 
 
 def _norm_name(name: str) -> str:
-    return str(name or "").split("_", 1)[0].lower()
+    value = str(name or "").strip()
+    value = re.sub(r"[_\-]\d+$", "", value)
+    value = re.sub(r"[_\-]+", " ", value)
+    value = re.sub(r"\s+", " ", value)
+    return value.strip().lower()
 
-
-def _norm_color(color: str | None) -> str:
-    return str(color or "gray").strip().lower() or "gray"
 
 
 def _distance_category_ids(axis_distance: torch.Tensor) -> torch.Tensor:
@@ -462,30 +464,30 @@ class GraphEncoder(nn.Module):
         if self.edge_mode not in {"goal_star", "goal_star_random", "complete"}:
             raise ValueError(f"Unsupported edge_mode={self.edge_mode!r}")
         payload = torch.load(embeddings_path, map_location="cpu")
-        if "id_to_name_emb" not in payload or "id_to_color_emb" not in payload:
+        if "id_to_name_emb" not in payload:
             raise KeyError(
-                "GraphEncoder expects a compact object-id cache with keys "
-                "'id_to_name_emb' and 'id_to_color_emb'. Regenerate it with create_cod.py."
+                "GraphEncoder expects a compact object-id cache with key "
+                "'id_to_name_emb'. Regenerate it with create_cod.py."
+            )
+
+        metadata = payload.get("metadata", {})
+        if metadata.get("contains_color_embeddings") is True:
+            print(
+                "[GraphEncoder] WARNING: cache metadata reports legacy color "
+                "embeddings; they will be ignored"
             )
 
         name_emb = payload["id_to_name_emb"].float()
-        color_emb = payload["id_to_color_emb"].float()
-        if name_emb.shape != color_emb.shape:
+        if name_emb.dim() != 2 or name_emb.shape[0] < 2:
             raise ValueError(
-                "name/color embedding tables must have same shape, got "
-                f"{name_emb.shape} and {color_emb.shape}"
+                "id_to_name_emb must have shape [max_object_id + 1, clip_dim], "
+                f"got {tuple(name_emb.shape)}"
             )
 
         self.register_buffer("id_to_name_emb", name_emb, persistent=False)
-        self.register_buffer("id_to_color_emb", color_emb, persistent=False)
         clip_dim = int(name_emb.shape[-1])
 
         self.name_proj = nn.Sequential(
-            nn.Linear(clip_dim, 128),
-            nn.ReLU(inplace=True),
-            nn.Linear(128, text_dim),
-        )
-        self.color_proj = nn.Sequential(
             nn.Linear(clip_dim, 128),
             nn.ReLU(inplace=True),
             nn.Linear(128, text_dim),
@@ -509,7 +511,7 @@ class GraphEncoder(nn.Module):
         else:
             self.goal_proj = None
 
-        node_blocks = 2
+        node_blocks = 1
         if self.include_node_metric:
             node_blocks += 1
         if self.include_node_is_goal:
@@ -550,12 +552,14 @@ class GraphEncoder(nn.Module):
             nn.Linear(hidden_dim, out_dim),
         )
 
-        self.class_color_to_id: dict[str, int] = dict(
-            payload.get("class_color_to_id", {})
-        )
-        self.name_to_default_id: dict[str, int] = dict(
-            payload.get("name_to_default_id", {})
-        )
+        self.raw_name_to_id: dict[str, int] = {
+            str(key).strip().lower(): int(value)
+            for key, value in payload.get("raw_name_to_id", {}).items()
+        }
+        self.name_to_default_id: dict[str, int] = {
+            str(key): int(value)
+            for key, value in payload.get("name_to_default_id", {}).items()
+        }
         self.scene_graph_cache: dict[int, torch.Tensor] = {}
         self._topology_cache: OrderedDict[Hashable, PackedTopology] = OrderedDict()
 
@@ -566,7 +570,7 @@ class GraphEncoder(nn.Module):
 
     @property
     def learned_node_fields(self) -> tuple[str, ...]:
-        fields = ["name_embedding", "color_embedding"]
+        fields = ["name_embedding"]
         if self.include_node_metric:
             fields.append("xyz_metric_embedding")
         if self.include_node_is_goal:
@@ -601,7 +605,12 @@ class GraphEncoder(nn.Module):
 
         print("\nEdge topology:")
         print(f"  edge_mode            : {self.edge_mode}")
-        print("  goal relation edges  : goal -> object")
+        if self.edge_mode == "goal_star":
+            print("  relation pairs       : goal -> every active non-goal object")
+        elif self.edge_mode == "complete":
+            print("  relation pairs       : every active node -> every other active node")
+        else:
+            print("  relation pairs       : goal-star + random object-object pairs")
         print("  parallel edges/pair  : 2 (Y relation + X relation)")
         print(f"  self_loops           : {'ON' if self.self_loops else 'OFF'}")
         print("  relation payload     : [direction_id, distance_id] -> fixed one-hot")
@@ -631,13 +640,13 @@ class GraphEncoder(nn.Module):
         print(line + "\n")
 
     @staticmethod
-    def _cc_key(name: str, color: str) -> str:
-        return f"{_norm_name(name)}|{_norm_color(color)}"
+    def _raw_name_key(name: str) -> str:
+        return str(name or "").strip().lower()
 
-    def _lookup_object_id(self, name: str, color: str | None = None) -> int:
-        key = self._cc_key(name, color or "gray")
-        if key in self.class_color_to_id:
-            return int(self.class_color_to_id[key])
+    def _lookup_object_id(self, name: str) -> int:
+        raw_key = self._raw_name_key(name)
+        if raw_key in self.raw_name_to_id:
+            return int(self.raw_name_to_id[raw_key])
         base = _norm_name(name)
         return int(self.name_to_default_id.get(base, 0))
 
@@ -674,8 +683,7 @@ class GraphEncoder(nn.Module):
         rows = []
         for node in nodes.values():
             raw_name = node.get("class_name", "")
-            color = node.get("color", node.get("base_color", "gray"))
-            obj_id = self._lookup_object_id(raw_name, color)
+            obj_id = self._lookup_object_id(raw_name)
             obb = node.get("bbox_3d", {}).get("obb", {})
             center = obb.get("center", [0.0, 0.0, 0.0])
             rows.append(
@@ -1145,11 +1153,19 @@ class GraphEncoder(nn.Module):
         B: int,
     ) -> torch.Tensor:
         max_id = self.id_to_name_emb.shape[0] - 1
-        node_ids = node_ids.clamp(0, max_id)
+        if node_ids.numel() > 0:
+            min_node_id = int(node_ids.min().item())
+            max_node_id = int(node_ids.max().item())
+            if min_node_id < 0 or max_node_id > max_id:
+                raise ValueError(
+                    "Graph observation contains object IDs outside the semantic "
+                    f"cache range [0, {max_id}]: observed "
+                    f"[{min_node_id}, {max_node_id}]. Regenerate "
+                    "text_embeddings.pt with create_cod.py."
+                )
 
         features = [
             self.name_proj(self.id_to_name_emb[node_ids]),
-            self.color_proj(self.id_to_color_emb[node_ids]),
         ]
         if self.include_node_metric:
             assert self.pos_proj is not None
@@ -1242,14 +1258,6 @@ class GraphEncoder(nn.Module):
         scene_ids: Optional[torch.Tensor] = None,
         topology_cache_key: Optional[Hashable] = None,
     ) -> torch.Tensor:
-        # One-shot scene dump for inspect_graph.py: GIROL_DUMP_GRAPH=1
-        import os as _os
-        if _os.environ.get("GIROL_DUMP_GRAPH") == "1" and not getattr(self, "_dump_done", False):
-            self._dump_done = True
-            _os.makedirs("logs", exist_ok=True)
-            torch.save(graph_flat.detach().cpu(), "logs/scene_dump.pt")
-            print(f"[dump] saved graph_flat {tuple(graph_flat.shape)} -> logs/scene_dump.pt "
-                  "(inspect with scripts/algos/inspect_graph.py)")
         return self.encode_graph(
             graph_flat,
             scene_ids=scene_ids,

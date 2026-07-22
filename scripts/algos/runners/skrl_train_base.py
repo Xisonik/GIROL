@@ -496,7 +496,7 @@ class BaseSkrlTrain:
             original_post(timestep, timesteps)
             aux_trainer.step(timestep)
 
-            log_interval = int(kwargs.get("log_interval", 50))
+            log_interval = int(kwargs.get("log_interval", 5000))
             if timestep % log_interval == 0:
                 if hasattr(env.unwrapped, "get_metrics"):
                     metrics = env.unwrapped.get_metrics()
