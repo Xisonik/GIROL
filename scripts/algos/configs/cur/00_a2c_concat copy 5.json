@@ -1,8 +1,7 @@
 {
   "run": {
     "algo": "ppo",
-    "name": "ppo_concat_lstm",
-    "timesteps": 350000
+    "name": "ppo_concat_lstm"
   },
   "agent": {
     "rollouts": 128,

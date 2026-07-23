@@ -337,7 +337,7 @@ class BaseSkrlTrain:
     def resolve_num_envs(self, cfg: dict) -> int:
         num_envs = int(cfg["run"]["num_envs"])
         if cfg["run"].get("video", False) or cfg["run"].get("eval", False) or not cfg["run"].get("headless", True):
-            num_envs = 1
+            num_envs = 3
         return num_envs
 
     def build_isaac_cli_args(self, cfg: dict) -> list[str]:

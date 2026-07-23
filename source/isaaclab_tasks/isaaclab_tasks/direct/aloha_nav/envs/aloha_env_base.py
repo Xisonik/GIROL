@@ -29,6 +29,7 @@ from ..modules.memory_manager import MemoryManager
 from ..modules.asset_manager import AssetManager
 from ..modules.room_geometry import RoomGeometryConfig
 from ..modules.Noise_modules import RelativeYawObservationNoise
+from ..modules.collision_manager import CollisionManager
 from configs.clock import tick_global_step, get_global_step
 import omni.kit.commands
 import datetime
@@ -126,7 +127,7 @@ class BaseWheeledRobotEnvCfg(DirectRLEnvCfg):
         collision_group=-1,
         debug_vis=False,
     )
-    scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=32, env_spacing=24, replicate_physics=True)
+    scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=32, env_spacing=30, replicate_physics=True)
     robot: ArticulationCfg = ALOHA_CFG.replace(prim_path="/World/envs/env_.*/Robot")
     wheel_radius = 0.068
     wheel_distance = 0.34
@@ -171,6 +172,64 @@ class BaseWheeledRobotEnv(DirectRLEnv):
     def _default_use_obstacles(self) -> bool:
         return True
 
+    def _collision_action_mode(self) -> str:
+        return "velocity"
+
+    def _default_collision_radius(self) -> float:
+        return 0.4
+
+    def _get_contact_forces(self):
+        if "contact_sensor" not in self.scene.sensors:
+            return None
+        return self.scene["contact_sensor"].data.net_forces_w
+
+    def _initialize_collision_manager(self, runtime_cfg: dict) -> None:
+        collision_cfg = runtime_cfg.get("collision", {}) or {}
+        if not isinstance(collision_cfg, dict):
+            raise TypeError("runtime config field 'collision' must be an object")
+
+        def cfg_value(name: str, default):
+            return collision_cfg.get(
+                name, runtime_cfg.get(f"collision_{name}", default)
+            )
+
+        self.collision_manager = CollisionManager(
+            num_envs=self.num_envs,
+            device=self.device,
+            scene_manager=self.scene_manager,
+            to_local=self.to_local,
+            mode=cfg_value("mode", "gt"),
+            action_mode=self._collision_action_mode(),
+            prediction_horizon_s=float(
+                cfg_value("prediction_horizon_s", 1.0)
+            ),
+            agent_radius=float(
+                cfg_value("agent_radius", self._default_collision_radius())
+            ),
+            collision_margin=float(cfg_value("margin", 0.03)),
+            contact_force_threshold=float(
+                cfg_value("contact_force_threshold", 0.05)
+            ),
+            passage_center=float(cfg_value("passage_center", 3.0)),
+            passage_width=float(cfg_value("passage_width", 1.0)),
+            exclude_goal=bool(cfg_value("exclude_goal", True)),
+            contact_forces_getter=self._get_contact_forces,
+        )
+
+        # Compatibility aliases for older code and logs.
+        self.agent_collision_radius = self.collision_manager.agent_radius
+        self.collision_margin = self.collision_manager.collision_margin
+        self.future_collision_buf = self.collision_manager.collision_buf
+        self.future_inner_wall_collision_buf = (
+            self.collision_manager.inner_wall_collision_buf
+        )
+        self.future_out_of_bounds_buf = (
+            self.collision_manager.out_of_bounds_buf
+        )
+        self.future_invalid_action_buf = (
+            self.collision_manager.invalid_action_buf
+        )
+
     def _init_actuator_handles(self) -> None:
         self._left_wheel_id = self._robot.find_joints("left_wheel")[0]
         self._right_wheel_id = self._robot.find_joints("right_wheel")[0]
@@ -179,12 +238,9 @@ class BaseWheeledRobotEnv(DirectRLEnv):
         pass
 
     def _reset_variant_state(self, env_ids: torch.Tensor) -> None:
-        """Reset extra state owned by a concrete environment variant.
-
-        This hook is called after the common actor reset and before goal placement.
-        Variants should use it for controller state, predicted-collision flags, etc.
-        """
-        pass
+        """Reset collision state and variant-owned per-episode buffers."""
+        if hasattr(self, "collision_manager"):
+            self.collision_manager.reset(env_ids)
 
     def _reset_actor_on_episode_start(self, env_ids: torch.Tensor) -> None:
         """Common per-episode actor reset that is safe for all variants.
@@ -197,20 +253,6 @@ class BaseWheeledRobotEnv(DirectRLEnv):
             self.episode_length_buf = torch.zeros_like(self.episode_length_buf)
         self._actions[env_ids] = 0.0
         self._reset_variant_state(env_ids)
-
-    def _write_actor_state_to_sim(
-        self,
-        env_ids: torch.Tensor,
-        robot_pos: torch.Tensor,
-        robot_quats: torch.Tensor,
-    ) -> None:
-        """Write the placed actor state to simulation.
-
-        Default implementation is for the wheeled ALOHA Articulation.
-        RigidObject-based variants must override this method instead of
-        overriding the whole ``_reset_idx``.
-        """
-        self._write_actor_state_to_sim(env_ids=env_ids, robot_pos=robot_pos, robot_quats=robot_quats)
 
     def __init__(self, cfg: BaseWheeledRobotEnvCfg, render_mode: str | None = None, **kwargs):
         self._super_init = True
@@ -237,7 +279,7 @@ class BaseWheeledRobotEnv(DirectRLEnv):
         self.stage = 0
         self.use_staff = self._default_use_staff()
         self.use_obstacles = self._default_use_obstacles()
-        self.use_controller = False #kwargs.get('expert', False)
+        self.use_controller = True #kwargs.get('expert', False)
         self.imitation = False #kwargs.get('imitation', False)
         self.cur_angle_error = 0
         self.mean_radius = 0
@@ -262,6 +304,7 @@ class BaseWheeledRobotEnv(DirectRLEnv):
 
         self._init_actuator_handles()
         self._init_variant_after_actuators()
+        self._initialize_collision_manager(runtime_cfg)
 
         self.set_debug_vis(self.cfg.debug_vis)
 
@@ -346,7 +389,7 @@ class BaseWheeledRobotEnv(DirectRLEnv):
             enabled=runtime_cfg.get("relative_yaw_noise", False),
         )
 
-        self.TURN_TASK = False #TODO: bool(runtime_cfg.get("turn_task", True))
+        self.TURN_TASK = True #TODO: bool(runtime_cfg.get("turn_task", True))
         if self.TURN_TASK:
             self.stage = 4 #TODO: 4
             self.CL_ON = False
@@ -472,6 +515,18 @@ class BaseWheeledRobotEnv(DirectRLEnv):
         print(f"| Turn on curriculum learnong: {self.CL_ON}")
         print(f"|")
         print(f"| Turn on random actions: {self.random_actions}")
+        print(f"|")
+        print(f"| Collision mode: {self.collision_manager.mode}")
+        print(f"|")
+        print(
+            f"| Collision action mode: "
+            f"{self.collision_manager.action_mode}"
+        )
+        print(f"|")
+        print(
+            f"| Collision prediction horizon: "
+            f"{self.collision_manager.prediction_horizon_s} s"
+        )
         print(f"|")
         print(f"_______[ CONGIFG INFO CLOSE ]_______")
         if self.EVAL:
@@ -629,7 +684,7 @@ class BaseWheeledRobotEnv(DirectRLEnv):
         if torch.isnan(root_quat_w).any():
             print("Oh Nooooooo root_quat_w")
 
-        base_pos = torch.tensor([0.0, 0.0, 0.0], device=root_pos_w.device)
+        base_pos = torch.tensor([-5.0, -5.0, 0.0], device=root_pos_w.device)
 
         mask = torch.isnan(root_pos_w).any(dim=-1)
         root_pos_w[mask] = base_pos
@@ -676,77 +731,111 @@ class BaseWheeledRobotEnv(DirectRLEnv):
         return observations
 
     def _pre_physics_step(self, actions: torch.Tensor):
+        r = self.cfg.wheel_radius
+        L = self.cfg.wheel_distance
+        self._actions = actions.clone().clamp(-1.0, 1.0)
+
+        nan_mask = torch.isnan(self._actions) | torch.isinf(self._actions)
+        nan_indices = torch.nonzero(
+            nan_mask.any(dim=1), as_tuple=False
+        ).squeeze()
+        if nan_indices.numel() > 0:
+            if self.first_nan:
+                self.first_nan = False
+                print(
+                    f"[MY WARNING] NaN/Inf in actions for envs: "
+                    f"{nan_indices.tolist()}"
+                )
+            self._actions[nan_mask] = 0.0
+            actions[nan_mask] = 0.0
+
         if not self.TURN_TASK:
             env_ids = self._robot._ALL_INDICES.clone()
-            self._actions = actions.clone().clamp(-1.0, 1.0)
-
-            nan_mask = torch.isnan(self._actions) | torch.isinf(self._actions)
-            nan_indices = torch.nonzero(nan_mask.any(dim=1), as_tuple=False).squeeze()
-            if nan_indices.numel() > 0:
-                if self.first_nan:
-                    self.first_nan = False
-                    print(f"[MY WARNING] NaN/Inf in actions for envs: {nan_indices.tolist()}")
-                self._actions[nan_mask] = 0.0
-                actions[nan_mask] = 0.0
-
-            r = self.cfg.wheel_radius
-            L = self.cfg.wheel_distance
             self._step_update_counter += 1
-            
-            # МАСКА управляемых сред
             controlled_mask = torch.tensor(
                 [int(e.item()) in self.controlled_env_ids for e in env_ids],
-                dtype=torch.bool, device=self.device
+                dtype=torch.bool,
+                device=self.device,
             )
-            
-            # ШАГ 1: считаем скорости из actions для ВСЕх сред (базовая RL)
+
             linear_speed = 0.6 * (self._actions[:, 0] + 1.0)
-            angular_speed = 2 * self._actions[:, 1]
-            
-            # ШАГ 2: если есть управляемые → пересчитываем их через контроллер
+            angular_speed = 2.0 * self._actions[:, 1]
+
             if controlled_mask.any() or self.imitation:
                 self.turn_on_controller_step += 1
-                
                 quat = self._robot.data.root_quat_w
-                siny_cosp = 2 * (quat[:, 0] * quat[:, 3] + quat[:, 1] * quat[:, 2])
-                cosy_cosp = 1 - 2 * (quat[:, 2] * quat[:, 2] + quat[:, 3] * quat[:, 3])
-                yaw = torch.atan2(siny_cosp, cosy_cosp)
-                
-                # Получаем скорости от контроллера для ВСЕх сред
-                lin_sp_all, ang_sp_all = self.control_module.compute_controls(
-                    self.to_local(self._robot.data.root_pos_w[:, :2], env_ids),
-                    yaw
+                siny_cosp = 2 * (
+                    quat[:, 0] * quat[:, 3]
+                    + quat[:, 1] * quat[:, 2]
                 )
-                
-                # Пересчитываем ТОЛЬКО управляемые среды
+                cosy_cosp = 1 - 2 * (
+                    quat[:, 2] * quat[:, 2]
+                    + quat[:, 3] * quat[:, 3]
+                )
+                yaw = torch.atan2(siny_cosp, cosy_cosp)
+                lin_sp_all, ang_sp_all = self.control_module.compute_controls(
+                    self.to_local(
+                        self._robot.data.root_pos_w[:, :2], env_ids
+                    ),
+                    yaw,
+                )
                 controlled_indices = torch.where(controlled_mask)[0]
-                linear_speed[controlled_indices] = lin_sp_all[controlled_indices]
-                angular_speed[controlled_indices] = ang_sp_all[controlled_indices]
-                
-                # Обновляем actions ТОЛЬКО для управляемых
-                self._actions[controlled_indices, 0] = (linear_speed[controlled_indices] / 0.6) - 1
-                self._actions[controlled_indices, 1] = angular_speed[controlled_indices] / 2
+                linear_speed[controlled_indices] = lin_sp_all[
+                    controlled_indices
+                ]
+                angular_speed[controlled_indices] = ang_sp_all[
+                    controlled_indices
+                ]
+                self._actions[controlled_indices, 0] = (
+                    linear_speed[controlled_indices] / 0.6
+                ) - 1.0
+                self._actions[controlled_indices, 1] = (
+                    angular_speed[controlled_indices] / 2.0
+                )
                 actions.copy_(self._actions.clamp(-1.0, 1.0))
-            
-            # ШАГ 3: переводим скорости в управления моторами
-            self.angular_speed = angular_speed
-            self.velocities = torch.stack([linear_speed, angular_speed], dim=1)
-            self._left_wheel_vel = (linear_speed - (angular_speed * L / 2)) / r
-            self._right_wheel_vel = (linear_speed + (angular_speed * L / 2)) / r
         else:
-            r = self.cfg.wheel_radius
-            L = self.cfg.wheel_distance
-            self._actions = actions.clone().clamp(-1.0, 1.0)
-            linear_speed = 0.0*(self._actions[:, 0] + 1.0) # [num_envs], всегда > 0
-            angular_speed = 2*self._actions[:, 1]  # [num_envs], оставляем как есть от RL
-
+            linear_speed = torch.zeros_like(self._actions[:, 0])
+            angular_speed = 2.0 * self._actions[:, 1]
             if self.DEF_TURN:
-                linear_speed = torch.zeros_like(self._actions[:, 0])
-                angular_speed = torch.full_like(self._actions[:, 1], -2.0)
-            self.angular_speed = angular_speed
-            self.velocities = torch.stack([linear_speed, angular_speed], dim=1)
-            self._left_wheel_vel = (linear_speed - (angular_speed * L / 2)) / r
-            self._right_wheel_vel = (linear_speed + (angular_speed * L / 2)) / r
+                angular_speed = torch.full_like(angular_speed, -2.0)
+
+        root_quat_w = self._robot.data.root_quat_w
+        siny_cosp = 2 * (
+            root_quat_w[:, 0] * root_quat_w[:, 3]
+            + root_quat_w[:, 1] * root_quat_w[:, 2]
+        )
+        cosy_cosp = 1 - 2 * (
+            root_quat_w[:, 2] * root_quat_w[:, 2]
+            + root_quat_w[:, 3] * root_quat_w[:, 3]
+        )
+        current_yaw = torch.atan2(siny_cosp, cosy_cosp)
+
+        collision_result = self.collision_manager.evaluate_velocity(
+            current_pos_w=self._robot.data.root_pos_w.clone(),
+            current_yaw=current_yaw,
+            linear_speed=linear_speed,
+            angular_speed=angular_speed,
+            turn_task=self.TURN_TASK,
+        )
+
+        # GT mode rejects the predicted invalid command. Contact mode always
+        # returns an all-False invalid mask and lets physics execute it.
+        invalid_action = collision_result.invalid_action
+        linear_speed = linear_speed.clone()
+        angular_speed = angular_speed.clone()
+        linear_speed[invalid_action] = 0.0
+        angular_speed[invalid_action] = 0.0
+
+        self.angular_speed = angular_speed
+        self.velocities = torch.stack(
+            [linear_speed, angular_speed], dim=1
+        )
+        self._left_wheel_vel = (
+            linear_speed - angular_speed * L / 2.0
+        ) / r
+        self._right_wheel_vel = (
+            linear_speed + angular_speed * L / 2.0
+        ) / r
 
     def _apply_action(self):
         wheel_velocities = torch.stack([self._left_wheel_vel, self._right_wheel_vel], dim=1).unsqueeze(-1).to(dtype=torch.float32)
@@ -765,9 +854,13 @@ class BaseWheeledRobotEnv(DirectRLEnv):
             progress = self.previous_distance_error - r_error  # >0 если ближе к цели
             turnes = gamma * progress
 
-        has_contact = torch.logical_or(self.get_contact(), self.out_of_bounds())
+        collision_event = self.collision_manager.get_collision_event(
+            self._robot.data.root_pos_w
+        )
+        if self.TURN_TASK:
+            collision_event = collision_event | self.out_of_bounds()
 
-        collision_penalty = -3.0 * has_contact.float()
+        collision_penalty = -3.0 * collision_event.float()
         goal_bonus = 5.0 * goal_reached.float()
         reward = -0.05 + turnes + collision_penalty + goal_bonus # TODO: turnes + !Add this back
 
@@ -853,17 +946,8 @@ class BaseWheeledRobotEnv(DirectRLEnv):
         return returns, num_conditions_met, distance_to_goal+0.1-radius_threshold, angle_degrees
 
     def get_contact(self):
-        force_matrix = self.scene["contact_sensor"].data.net_forces_w
-        force_matrix[..., 2] = 0
-        # вычисляем модуль силы для каждого контакта
-        if force_matrix is not None and force_matrix.numel() > 0:
-            contact_forces = torch.norm(force_matrix, dim=-1)
-            num_contacts_per_env = torch.sum(contact_forces > 0.05, dim=1)
-            high_contact_envs = num_contacts_per_env >= 1
-        else:
-            print("force_matrix_w is None or empty")
-            high_contact_envs = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
-        return high_contact_envs
+        """Compatibility wrapper around the configured collision source."""
+        return self.collision_manager.get_collision_component()
 
     def update_success_rate(self, goal_reached):
         """Update policy-only, controller-only and aggregate success rates.
@@ -933,43 +1017,32 @@ class BaseWheeledRobotEnv(DirectRLEnv):
 
     def out_of_bounds(self):
         if not self.TURN_TASK:
-            poses = self.to_local(self._robot.data.root_pos_w)
-            x, y = poses[..., 0], poses[..., 1]
+            return self.collision_manager.get_out_of_bounds(
+                self._robot.data.root_pos_w
+            )
 
-            bounds = self.scene_manager.room_bounds
-            xmin = bounds['x_min'] + 1.5
-            xmax = bounds['x_max'] - 1.5
-            ymin = bounds['y_min'] + 1.5
-            ymax = bounds['y_max'] - 1.5
-            inside_outer = (
-                (x >= xmin) & (x <= xmax)
-                & (y >= ymin) & (y <= ymax)
-            )
-            inside_active = (
-                self.scene_manager.positions_in_active_navigation_area(poses)
-            )
-            return ~(inside_outer & inside_active)
-        else:
-            root_quat_w = self._robot.data.root_quat_w
-            root_pos_w = self._robot.data.root_pos_w
-            to_goal = self._desired_pos_w - root_pos_w
-            local_forward = torch.tensor(
-                [1.0, 0.0, 0.0],
-                device=root_quat_w.device,
-                dtype=root_quat_w.dtype,
-            ).unsqueeze(0).repeat(root_quat_w.shape[0], 1)
-            forward_w = self.quat_rotate(root_quat_w, local_forward)
-            forward_w_norm = torch.nn.functional.normalize(
-                forward_w[:, :2], dim=1
-            )
-            to_goal_norm = torch.nn.functional.normalize(
-                to_goal[:, :2], dim=1
-            )
-            cos_angle = torch.sum(
-                forward_w_norm * to_goal_norm, dim=1
-            ).clamp(-1.0, 1.0)
-            angle_degrees = torch.abs(torch.acos(cos_angle)) * 180.0 / math.pi
-            return angle_degrees > 150
+        root_quat_w = self._robot.data.root_quat_w
+        root_pos_w = self._robot.data.root_pos_w
+        to_goal = self._desired_pos_w - root_pos_w
+        local_forward = torch.tensor(
+            [1.0, 0.0, 0.0],
+            device=root_quat_w.device,
+            dtype=root_quat_w.dtype,
+        ).unsqueeze(0).repeat(root_quat_w.shape[0], 1)
+        forward_w = self.quat_rotate(root_quat_w, local_forward)
+        forward_w_norm = torch.nn.functional.normalize(
+            forward_w[:, :2], dim=1
+        )
+        to_goal_norm = torch.nn.functional.normalize(
+            to_goal[:, :2], dim=1
+        )
+        cos_angle = torch.sum(
+            forward_w_norm * to_goal_norm, dim=1
+        ).clamp(-1.0, 1.0)
+        angle_degrees = (
+            torch.abs(torch.acos(cos_angle)) * 180.0 / math.pi
+        )
+        return angle_degrees > 150
 
     def update_sr_stack(self):
         self.success_stacks = [[] for _ in range(self.num_envs)]  # Список списков для каждой среды
@@ -980,7 +1053,12 @@ class BaseWheeledRobotEnv(DirectRLEnv):
         inner flag - not changes in buffers
         """
         time_out = self.is_time_out(self.my_episode_lenght - 1)
-        died = self.goal_reached(get_num_subs=False) | self.get_contact() | self.out_of_bounds() #| time_out
+        collision_event = self.collision_manager.get_collision_event(
+            self._robot.data.root_pos_w
+        )
+        if self.TURN_TASK:
+            collision_event = collision_event | self.out_of_bounds()
+        died = self.goal_reached(get_num_subs=False) | collision_event
 
         if not inner:
             self.episode_length_buf[died] = 0

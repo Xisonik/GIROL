@@ -1,0 +1,11 @@
+{
+  "collision": {
+    "mode": "gt",
+    "prediction_horizon_s": 1.0,
+    "margin": 0.03,
+    "contact_force_threshold": 0.05,
+    "passage_center": 3.0,
+    "passage_width": 1.0,
+    "exclude_goal": true
+  }
+}

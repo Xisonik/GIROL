@@ -39,6 +39,7 @@ import importlib.util
 
 from .room_geometry import RoomCoordinateMapper
 from .scene_item_config import read_object_transform
+from .graveyard_layout import graveyard_capacity, graveyard_position
 from .wall_orientation import WallAwareObjectOrienter
 
 # =====================
@@ -1169,14 +1170,12 @@ class SceneManager:
             1, self.num_total_objects, 3, device=self.device
         )
 
-        spacing = 0.5
-        max_per_row = 16
-        for i in range(self.num_total_objects):
-            row = i // max_per_row
-            col = i % max_per_row
-            default_pos_tensor[0, i, 0] = (col - max_per_row / 2) * spacing
-            default_pos_tensor[0, i, 1] = (row - 2.0) * spacing
-            default_pos_tensor[0, i, 2] = -20.0
+        if self.num_total_objects > graveyard_capacity():
+            raise RuntimeError(
+                "Not enough graveyard cells: "
+                f"objects={self.num_total_objects}, "
+                f"capacity={graveyard_capacity()}"
+            )
 
         seen_ids = set()
         for obj_cfg in self.config:
@@ -1281,6 +1280,19 @@ class SceneManager:
             self.radii[0, indices] = torch.norm(
                 scaled_size_tensor[:2] / 2
             )
+
+            scaled_height = float(scaled_size_tensor[2].item())
+            for global_index in indices.tolist():
+                default_pos_tensor[0, global_index] = torch.tensor(
+                    graveyard_position(
+                        global_index,
+                        scaled_height=scaled_height,
+                        offset=transform.offset,
+                    ),
+                    device=self.device,
+                    dtype=torch.float32,
+                )
+
             start_idx += count
 
         if start_idx != self.num_total_objects:

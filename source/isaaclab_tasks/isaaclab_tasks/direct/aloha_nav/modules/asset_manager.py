@@ -6,6 +6,7 @@ import os
 from isaaclab.assets import RigidObject, RigidObjectCfg
 import isaaclab.sim as sim_utils
 
+from .graveyard_layout import graveyard_capacity, graveyard_position
 from .scene_item_config import read_object_transform
 
 
@@ -13,8 +14,8 @@ class AssetManager:
     """Spawn exactly the physical instances declared in scene_items.json.
 
     This class owns USD spawning concerns: USD path, rigid/collision properties,
-    static asset rotation, scale and initial translation offset. Runtime scene
-    placement remains the responsibility of SceneManager.
+    static asset rotation and asset scale. Runtime scene placement remains the
+    responsibility of SceneManager.
     """
 
     def __init__(self, config_path: str):
@@ -54,15 +55,28 @@ class AssetManager:
         self.prim_paths.clear()
         self.counts.clear()
 
+        total_object_count = sum(int(obj["count"]) for obj in self.items)
+        if total_object_count > graveyard_capacity():
+            raise RuntimeError(
+                "Not enough graveyard cells: "
+                f"objects={total_object_count}, "
+                f"capacity={graveyard_capacity()}"
+            )
+
+        # One index across all object types. Per-type instance_id must not be
+        # used for parking because every type starts from instance_id=0.
+        global_object_index = 0
+
         for obj in self.items:
             name = obj["name"]
             types = obj["type"]
-            if "info" in types:
-                continue
-
             count = int(obj["count"])
             if count < 0:
                 raise ValueError(f"Negative count for object {name!r}: {count}")
+
+            if "info" in types:
+                global_object_index += count
+                continue
 
             usd_paths = self._abs_paths(obj["usd_paths"])
             if not usd_paths:
@@ -71,6 +85,14 @@ class AssetManager:
             transform = read_object_transform(obj)
             self.prim_paths[name] = []
             self.counts[name] = count
+
+            base_size = obj["size"]
+            if not isinstance(base_size, list) or len(base_size) != 3:
+                raise ValueError(
+                    f"Object {name!r}: size must be [x, y, z], "
+                    f"got {base_size!r}"
+                )
+            scaled_height = float(base_size[2]) * float(transform.scale[2])
 
             is_collision_object = (
                 "movable_obstacle" in types
@@ -84,6 +106,12 @@ class AssetManager:
                     )
                 else:
                     prim_path = f"/World/envs/env_0/{name}_{instance_id}"
+
+                parked_position = graveyard_position(
+                    global_object_index,
+                    scaled_height=scaled_height,
+                    offset=transform.offset,
+                )
 
                 spawn_kwargs = {
                     "usd_path": usd_paths[0],
@@ -99,11 +127,6 @@ class AssetManager:
                     )
 
                 spawn_cfg = sim_utils.UsdFileCfg(**spawn_kwargs)
-                parked_position = (
-                    (instance_id % 16 - 8) * 0.5 + transform.offset[0],
-                    (instance_id // 16 - 2) * 0.5 + transform.offset[1],
-                    -20.0 + transform.offset[2],
-                )
                 RigidObject(
                     RigidObjectCfg(
                         prim_path=prim_path,
@@ -115,5 +138,12 @@ class AssetManager:
                     )
                 )
                 self.prim_paths[name].append(prim_path)
+                global_object_index += 1
+
+        if global_object_index != total_object_count:
+            raise RuntimeError(
+                "Asset graveyard indexing mismatch: "
+                f"indexed={global_object_index}, expected={total_object_count}"
+            )
 
         return self.prim_paths, self.counts

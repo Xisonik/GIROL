@@ -20,7 +20,7 @@ from isaaclab.utils import configclass
 class ViewerCfg:
     """Configuration of the scene viewport camera."""
 
-    eye: tuple[float, float, float] = (0, 20, 15.5)
+    eye: tuple[float, float, float] = (0, 50, 35.5)
     """Initial camera position (in m). Default is (7.5, 7.5, 7.5)."""
 
     lookat: tuple[float, float, float] = (0.0, 1.0, 0.0)
