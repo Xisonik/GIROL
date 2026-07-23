@@ -1,7 +1,14 @@
 # Results — Metric vs Hierarchical Non-Metric Graph (DDQN pipeline)
 
+> ⚠️ **STALE SCENE — kept for reference.** The numbers in the **Comparison** table below were produced on
+> the **old 4-room scene** (23 objects, old object set) *before* merging the teammate's `main`, and were
+> **fixed at curriculum stage 4** (old curriculum). The current scene is now **3 rooms** (office/utility/
+> bathroom, **28 objects**) and the live runs **progress stages 0→1→2** (teammate's curriculum). So the
+> stale table and the live table differ in **both scene and stage regime** and are **not comparable** —
+> see the live results directly below.
+
 Comparison of the two graph representations trained through the **DDQN** pipeline
-(`run_experiments.py`, task `Aloha_nav_hab_wr`, **4-room** scene). Same everything
+(`run_experiments.py`, task `Aloha_nav_hab_wr`, **4-room** scene at the time). Same everything
 except the graph encoder. See [NONMETRIC_GRAPH.md](NONMETRIC_GRAPH.md).
 
 - **metric** — `perception.GraphEncoder`, `include_node_metric: true` (coords in nodes, direction **+ distance** edges, flat)
@@ -12,7 +19,44 @@ Metric definitions (aux orientation head, 36 bins = 10°/bin):
 
 ---
 
-## Comparison  (values: `final (best/min)`)
+## Current 3-room scene — live runs  (Jul 23)
+
+Runs on the **current 3-room / 28-object scene** through the **teammate's curriculum**, which
+**progresses stages 0 → 1 → 2** (0→1 time-gated at 2000 steps, 1→2 when spawn radius ≥ 6 m, then
+continuous success-gated difficulty). This is a **different regime** from the two runs in the *stale*
+Comparison table below, which were **fixed at stage 4** on the old 4-room scene — so the two tables are
+**not directly comparable** (different scene **and** different curriculum/stage).
+
+| metric | **flat non-metric (teammate)** | metric | hierarchical |
+|---|---|---|---|
+| orientation **acc_strict** (≈≤10°) | 0.524  (best 0.609 @70k) | *pending re-run* | *pending re-run* |
+| orientation **acc_relaxed** (≈≤20°) | 0.698  (best 0.784 @70k) | — | — |
+| orientation **mean_error_deg** ↓ | 26.8°  (best 17.8° @70k) | — | — |
+| orientation confidence | 0.447  (best 0.516) | — | — |
+| nav success_rate (policy-only) | 28%  @ r≈5.5 m, stage 2 | — | — |
+| nav all_success_rate (w/ controller) | 64.6% | — | — |
+| avg_episode_length | 51.1 | — | — |
+| **curriculum stage reached** | **0 → 1 → 2 (progressing)** | — | — |
+| Q-network loss ↓ | 0.201 (min 0.083) | — | — |
+| total reward (mean) | 1.47 (best 8.78 @122k) | — | — |
+| num_envs / steps | 24 / 275,000 | — | — |
+
+⚠ **Orientation peaked early, then regressed.** Best `acc_strict` **0.609 @ 70k** decayed to **0.524 @ 275k**
+(mean error 17.8° → 26.8°). Most likely the curriculum ramping the spawn radius/difficulty (into stage 2,
+r → 5.5–6.5 m) made heading harder as training progressed, and/or the orientation head is coupled into the
+policy loop (`use_orientation_module: true`). Treat the **best** column as "what it can reach", the **final**
+as "where it settled under stage-2 difficulty."
+
+**Metric + hierarchical on this scene are not yet re-run.** Launch them with the same command
+(`--configs-dir scripts/algos/configs/metric_vs_nonmetric`) so all three share this scene + curriculum,
+then this becomes a clean 3-way table.
+
+- run dir: `logs/skrl/Aloha_nav_hab_wr/07.23_05-45-11_metric_vs_nonmetric/nonmetric_flat/`
+- encoder: `perception.GraphEncoder`, `include_node_metric: false`, `edge_mode: goal_star` · seed 42
+
+---
+
+## Comparison  (STALE — old 4-room scene, stage-4-only)  ·  values: `final (best/min)`
 
 | metric | **metric baseline** | **non-metric (hierarchical)** | winner |
 |---|---|---|---|
@@ -22,7 +66,7 @@ Metric definitions (aux orientation head, 36 bins = 10°/bin):
 | orientation confidence | 0.567 | **0.668** | non-metric |
 | nav success_rate (%) | **81.7 (90.8)** | 63.0 (81.0) | metric |
 | avg_episode_length | 33.4 | 52.4 | — |
-| curriculum stage reached | 4 | 4 | tie |
+| curriculum stage reached | 4 (fixed) | 4 (fixed) | tie |
 | Q-network loss ↓ | 0.31 (0.17) | 0.31 (0.15) | tie |
 | total reward (mean) | 3.33 (7.0) | 5.80 (7.45) | — |
 | **num_envs** | **24** | **10** | ⚠ differ |
@@ -62,3 +106,27 @@ graph carries spatial info unless img-only is clearly worse than both.
 
 Extract command (for re-reads): read `.../{run}/tensorboard/` scalars
 (`aux/orient/acc_strict`, `aux/orient/acc_relaxed`, `aux/orient/mean_error_deg`, `env/success_rate`).
+
+---
+
+## Re-run (on the current 3-room / 28-object scene) — now **3-way**
+The comparison now has **three** representations (see [GRAPHS.md](GRAPHS.md) for the architectures):
+
+| run file | representation | encoder |
+|---|---|---|
+| `metric.json` | **metric** | `GraphEncoder`, `include_node_metric: true` |
+| `hierarchical.json` | **hierarchical non-metric** (mine) | `HierarchicalGraphEncoder` |
+| `nonmetric_flat.json` | **flat non-metric** (teammate) | `GraphEncoder`, `include_node_metric: false` |
+
+`metric` and `nonmetric_flat` are the same encoder toggled by one flag → the clean control.
+All share `base.json` (`num_envs=24`, `timesteps=300000`, seed 42). Run all three, matched:
+```bash
+PYTHONNOUSERSITE=1 ./isaaclab.sh -p scripts/algos/run_experiments.py \
+  --configs-dir scripts/algos/configs/metric_vs_nonmetric
+```
+Or just the teammate's flat non-metric (index 2 — sorted `hierarchical=0, metric=1, nonmetric_flat=2`):
+```bash
+PYTHONNOUSERSITE=1 ./isaaclab.sh -p scripts/algos/run_experiments.py \
+  --configs-dir scripts/algos/configs/metric_vs_nonmetric --start 2 --end 3
+```
+When they finish, tell me the run dirs and I'll extract the new scalars and add a fresh 3-way table above.

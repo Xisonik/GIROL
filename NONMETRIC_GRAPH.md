@@ -1,6 +1,6 @@
 **Contents**
 
-- [Hierarchical Non-Metric Graph — Representation & Encoding (DDQN pipeline)](#hierarchical-non-metric-graph--representation--encoding-ddqn-pipeline)
+- [Hierarchical Non-Metric Graph — Representation \& Encoding (DDQN pipeline)](#hierarchical-non-metric-graph--representation--encoding-ddqn-pipeline)
   - [1. The idea](#1-the-idea)
   - [2. Input (unchanged — the env observation)](#2-input-unchanged--the-env-observation)
   - [3. Graph structure (hierarchical)](#3-graph-structure-hierarchical)
@@ -9,14 +9,15 @@
     - [4.2 Qualitative direction (3-way per axis, threshold = 0.4 m)](#42-qualitative-direction-3-way-per-axis-threshold--04-m)
   - [5. Node encoding](#5-node-encoding)
   - [6. Edge encoding](#6-edge-encoding)
-  - [7. Message passing & readout](#7-message-passing--readout)
+  - [7. Message passing \& readout](#7-message-passing--readout)
   - [8. Metric vs non-metric (across the two configs)](#8-metric-vs-non-metric-across-the-two-configs)
   - [9. How to run (train)](#9-how-to-run-train)
-  - [10. Comparison methodology & the open caveat](#10-comparison-methodology--the-open-caveat)
+  - [10. Comparison methodology \& the open caveat](#10-comparison-methodology--the-open-caveat)
   - [11. What was deliberately excluded](#11-what-was-deliberately-excluded)
 - [Non-metric graph example](#non-metric-graph-example)
 - [Results — Metric vs Hierarchical Non-Metric Graph (DDQN pipeline)](#results--metric-vs-hierarchical-non-metric-graph-ddqn-pipeline)
   - [Comparison  (values: `final (best/min)`)](#comparison--values-final-bestmin)
+  - [| **training steps** | **249,750** | **178,400** | ⚠ differ |](#-training-steps--249750--178400---differ-)
   - [Reading (with the caveat above)](#reading-with-the-caveat-above)
   - [Run provenance](#run-provenance)
 
@@ -237,6 +238,7 @@ Establish the img-only point before claiming "non-metric = metric."
 
 
 # Non-metric graph example
+![alt text](image-2.png)
 ![alt text](image.png)
 ```
 === env 0: 23 objects | goal = #22 teddy in room L/F ===
