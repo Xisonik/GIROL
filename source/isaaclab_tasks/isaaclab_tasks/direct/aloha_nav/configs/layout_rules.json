@@ -12,8 +12,7 @@
     ],
     "active_rooms": [
       1,
-      2,
-      3
+      2
     ],
     "outer_size": 20.0,
     "subroom_size": 10.0,
@@ -167,10 +166,12 @@
         "objects": [
           "oven",
           "clock",
-          "chair_2",
           "vase",
           "TrashCan",
-          "Crestwood_Chair"
+          "Crestwood_Chair",
+	  "cabinet",
+	  "lamp",
+	  "Standard_HalfUnit"
         ]
       },
       "goal": {
@@ -192,37 +193,6 @@
         }
       ]
     },
-    "utility": {
-      "staff": {
-        "grid": "staff_grid",
-        "objects": [
-          "cabinet",
-          "lamp",
-          "desk",
-          "Standard_HalfUnit",
-          "Yucca_Cane",
-          "box"
-        ]
-      },
-      "goal": {
-        "grid": "goals_grid",
-        "object": "teddy",
-        "surface_providers": [
-          {
-            "object": "table_2",
-            "count": 1
-          }
-        ]
-      },
-      "obstacles": [
-        {
-          "grid": "center_obstacle_grid",
-          "object": "ladder",
-          "min_count": 0,
-          "max_count": 1
-        }
-      ]
-    },
     "bathroom": {
       "staff": {
         "grid": "staff_grid",
@@ -231,7 +201,10 @@
           "holodilnik",
           "plita",
           "stiralka",
-          "ventolator"
+          "ventolator",
+	  "box",
+	  "ladder",
+	  "Yucca_Cane"
         ]
       },
       "goal": {
