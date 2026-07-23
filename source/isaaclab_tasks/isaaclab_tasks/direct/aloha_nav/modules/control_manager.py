@@ -2,7 +2,7 @@ import torch
 import math
 
 class VectorizedPurePursuit:
-    def __init__(self, num_envs, device='cuda', max_path_length=15, lookahead_distance=0.35,
+    def __init__(self, num_envs, device='cuda', max_path_length=150, lookahead_distance=0.35,
                  base_linear_velocity=1.0, max_angular_velocity=1.8, arrival_threshold=0.2):
         self.num_envs = num_envs
         self.device = torch.device(device)

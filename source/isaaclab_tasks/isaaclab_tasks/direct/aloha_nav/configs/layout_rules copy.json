@@ -11,7 +11,9 @@
       ]
     ],
     "active_rooms": [
-      1
+      1,
+      2,
+      3
     ],
     "outer_size": 20.0,
     "subroom_size": 10.0,
@@ -187,6 +189,67 @@
           "object": "chair_3",
           "min_count": 0,
           "max_count": 4
+        }
+      ]
+    },
+    "utility": {
+      "staff": {
+        "grid": "staff_grid",
+        "objects": [
+          "cabinet",
+          "lamp",
+          "desk",
+          "Standard_HalfUnit",
+          "Yucca_Cane",
+          "box"
+        ]
+      },
+      "goal": {
+        "grid": "goals_grid",
+        "object": "teddy",
+        "surface_providers": [
+          {
+            "object": "table_2",
+            "count": 1
+          }
+        ]
+      },
+      "obstacles": [
+        {
+          "grid": "center_obstacle_grid",
+          "object": "ladder",
+          "min_count": 0,
+          "max_count": 1
+        }
+      ]
+    },
+    "bathroom": {
+      "staff": {
+        "grid": "staff_grid",
+        "objects": [
+          "dushevaia",
+          "holodilnik",
+          "plita",
+          "stiralka",
+          "ventolator"
+        ]
+      },
+      "goal": {
+        "grid": "goals_grid",
+        "object": "teddy",
+        "surface_providers": [
+          {
+            "object": "table_2",
+            "count": 1
+          }
+        ]
+      },
+      "obstacles": [
+        {
+          "grid": "center_obstacle_grid",
+          "object": "vanna_korzina",
+          "min_count": 0,
+          "max_count": 1
         }
       ]
     }

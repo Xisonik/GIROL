@@ -25,8 +25,8 @@ sys.path.insert(0, str(SCRIPT_DIR))
 
 from configs.config_utils import expand_config_dir, save_json  # noqa: E402
 
-CONFIGS_DIR = SCRIPT_DIR / "configs" / "cur_dqn"
-RUNNER_SCRIPT = SCRIPT_DIR / "runners" / "train_ddqn.py"
+CONFIGS_DIR = SCRIPT_DIR / "configs" / "cur_sac"
+RUNNER_SCRIPT = SCRIPT_DIR / "runners" / "train_sac.py"
 PYTHON = sys.executable
 
 

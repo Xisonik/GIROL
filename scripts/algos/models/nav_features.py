@@ -74,6 +74,7 @@ class NavFeatureExtractor(nn.Module):
     def output_dim(self) -> int:
         return int(self._output_dim)
 
+
     def _build_output_dim(self) -> int:
         dim = 0
 
@@ -139,6 +140,8 @@ class NavFeatureExtractor(nn.Module):
 
         x = torch.cat(feats, dim=-1)
         got = int(x.shape[-1])
+        if not torch.isfinite(x).all():
+            print("no no no ")
         if got != self.output_dim:
             raise RuntimeError(f"Feature dim mismatch: got {got}, expected {self.output_dim}")
         return x
@@ -158,3 +161,14 @@ class NavFeatureExtractor(nn.Module):
             "orientation_ref": self.orientation_ref,
             "orientation_dim": self.orientation_dim,
         }
+
+def check_finite(name: str, tensor: torch.Tensor) -> None:
+    if not torch.isfinite(tensor).all():
+        bad = ~torch.isfinite(tensor)
+        raise RuntimeError(
+            f"[NaN DEBUG] {name} contains NaN/Inf: "
+            f"shape={tuple(tensor.shape)}, "
+            f"bad_count={int(bad.sum().item())}, "
+            f"min={torch.nan_to_num(tensor).min().item()}, "
+            f"max={torch.nan_to_num(tensor).max().item()}"
+        )

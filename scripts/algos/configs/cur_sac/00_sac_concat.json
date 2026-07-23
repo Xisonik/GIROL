@@ -1,0 +1,28 @@
+{
+  "run": {
+    "algo": "sac",
+    "name": "sac_concat"
+  },
+  "model": {
+    "policy": {
+      "class_path": "models.sac_models.SACNavPolicy",
+      "kwargs": {
+        "hidden_dims": {
+          "$value": [
+            256
+          ]
+        }
+      }
+    },
+    "q_critic": {
+      "class_path": "models.sac_models.SACNavQCritic",
+      "kwargs": {
+        "hidden_dims": {
+          "$value": [
+            256
+          ]
+        }
+      }
+    }
+  }
+}

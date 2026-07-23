@@ -326,6 +326,8 @@ class DirectRLEnv(gym.Env):
             A tuple containing the observations, rewards, resets (terminated and truncated) and extras.
         """
         action = action.to(self.device)
+        if not torch.isfinite(action).all():
+            print("no no no ")
         # add action noise
         if self.cfg.action_noise_model:
             action = self._action_noise_model(action)
