@@ -765,7 +765,7 @@ class BlockLayoutSampler:
         block_cfg: dict,
         object_pool: dict[str, list[int]],
         place_goal: bool,
-        allow_movable_obstacles: bool,
+        place_scene_objects: bool,
     ) -> int | None:
         # Priority: goal/provider -> obstacles -> staff.
         used_cells_by_grid: dict[str, set[int]] = {}
@@ -821,19 +821,14 @@ class BlockLayoutSampler:
                     check_existing_objects=False,
                 )
 
+        # During the first scene warm-up episodes only the selected goal and
+        # its surface provider(s) are placed. Every obstacle and staff object
+        # remains inactive at its default graveyard position.
+        if not place_scene_objects:
+            return selected_goal_idx
+
         for obstacle_cfg in block_cfg.get('obstacles', []):
             obstacle_name = obstacle_cfg['object']
-            obstacle_types = self.m.object_map[obstacle_name]['types']
-
-            # Movable obstacles remain inactive at their default graveyard
-            # positions during the first N episodes of this specific env.
-            # The per-env episode counter is advanced only when that env resets,
-            # so asynchronously finishing vectorized scenes warm up independently.
-            if (
-                not allow_movable_obstacles
-                and 'movable_obstacle' in obstacle_types
-            ):
-                continue
 
             min_count = int(obstacle_cfg.get('min_count', 0))
             max_count = int(obstacle_cfg.get('max_count', min_count))
@@ -904,6 +899,14 @@ class BlockLayoutSampler:
         rooms_to_fill = len(active_room_ids)
 
         for env_offset, env_id in enumerate(env_ids.tolist()):
+            # Counts are per environment because vectorized environments reset
+            # asynchronously. Counts 0, 1 and 2 are the three warm-up episodes;
+            # count 3 and later use the complete scene.
+            warmup = (
+                int(self.m.scene_episode_counts[env_id].item())
+                < self.m.scene_warmup_episodes
+            )
+
             block_perm = torch.randperm(
                 block_count, device=self.m.device
             ).tolist()
@@ -920,13 +923,24 @@ class BlockLayoutSampler:
                 0, len(assignments), (1,), device=self.m.device
             ).item())
             object_pool = self._new_object_pool()
-            candidate_goal_indices: list[int] = []
 
             for assignment_idx, (room_id, block_name) in enumerate(assignments):
                 self.m.room_block_ids[env_id, room_id] = self.block_to_id[block_name]
+
+                # A warm-up scene contains exactly the selected target block's
+                # goal and table/provider. Blocks in all other rooms stay fully
+                # inactive in the graveyard. In a normal scene, preserve the
+                # configured selected_only/all_candidates goal behavior.
+                if warmup and assignment_idx != target_assignment:
+                    continue
+
                 place_goal = (
-                    self.goal_mode == 'all_candidates'
-                    or assignment_idx == target_assignment
+                    assignment_idx == target_assignment
+                    if warmup
+                    else (
+                        self.goal_mode == 'all_candidates'
+                        or assignment_idx == target_assignment
+                    )
                 )
                 goal_idx = self._place_block(
                     env_id=env_id,
@@ -935,53 +949,18 @@ class BlockLayoutSampler:
                     block_cfg=self.blocks[block_name],
                     object_pool=object_pool,
                     place_goal=place_goal,
-                    allow_movable_obstacles=(
-                        int(self.m.scene_episode_counts[env_id].item())
-                        >= self.m.movable_obstacle_warmup_episodes
-                    ),
+                    place_scene_objects=not warmup,
                 )
-                if goal_idx is not None:
-                    candidate_goal_indices.append(goal_idx)
-                    if assignment_idx == target_assignment:
-                        selected_goal_indices[env_offset] = goal_idx
+                if (
+                    goal_idx is not None
+                    and assignment_idx == target_assignment
+                ):
+                    selected_goal_indices[env_offset] = goal_idx
 
             if selected_goal_indices[env_offset] < 0:
                 raise RuntimeError(
                     f"No navigation goal was placed in env {env_id}"
                 )
-
-        # Hard safety invariant: during warm-up no movable obstacle may be
-        # active, regardless of how a future layout rule references it.
-        warmup_mask = (
-            self.m.scene_episode_counts[env_ids]
-            < self.m.movable_obstacle_warmup_episodes
-        )
-        movable_indices = self.m.type_map.get(
-            'movable_obstacle',
-            torch.empty(0, dtype=torch.long, device=self.m.device),
-        )
-        if warmup_mask.any() and movable_indices.numel() > 0:
-            warmup_env_ids = env_ids[warmup_mask]
-            self.m.active[warmup_env_ids[:, None], movable_indices[None, :]] = False
-            self.m.positions[
-                warmup_env_ids[:, None], movable_indices[None, :]
-            ] = self.m.default_positions[
-                warmup_env_ids[:, None], movable_indices[None, :]
-            ]
-            self.m.orientations[
-                warmup_env_ids[:, None], movable_indices[None, :]
-            ] = self.m.default_orientations[
-                warmup_env_ids[:, None], movable_indices[None, :]
-            ]
-            self.m.object_room_ids[
-                warmup_env_ids[:, None], movable_indices[None, :]
-            ] = -1
-            self.m.on_surface_idx[
-                warmup_env_ids[:, None], movable_indices[None, :]
-            ] = -1
-            self.m.surface_level[
-                warmup_env_ids[:, None], movable_indices[None, :]
-            ] = 0
 
         self.m.update_object_orientations(env_ids)
         self.m.chose_active_goal_state(
@@ -989,9 +968,8 @@ class BlockLayoutSampler:
             selected_goal_indices=selected_goal_indices,
         )
 
-        # Increment only the environments that actually completed this reset.
-        # Counts start at zero: calls 0 and 1 are warm-up; call 2 places movable
-        # obstacles normally.
+        # Increment only environments that completed this reset. The fourth
+        # reset call sees count == 3 and therefore builds the complete scene.
         self.m.scene_episode_counts[env_ids] += 1
         self.m.graph.refresh()
 
@@ -1122,16 +1100,15 @@ class SceneManager:
             (self.num_envs,), -1, dtype=torch.long, device=self.device
         )
 
-        # Per-environment warm-up. Vectorized environments reset
-        # asynchronously, therefore a single global episode counter would be
-        # incorrect. Each env keeps movable obstacles on its own graveyard for
-        # its first two layout/reset calls.
-        self.movable_obstacle_warmup_episodes = int(
-            layout_rules.get('movable_obstacle_warmup_episodes', 2)
+        # Per-environment scene warm-up. During the first three layout/reset
+        # calls only the selected goal and its table/surface provider are active;
+        # every other object remains at its default graveyard position.
+        self.scene_warmup_episodes = int(
+            layout_rules.get('scene_warmup_episodes', 3)
         )
-        if self.movable_obstacle_warmup_episodes < 0:
+        if self.scene_warmup_episodes < 0:
             raise ValueError(
-                'movable_obstacle_warmup_episodes must be non-negative'
+                'scene_warmup_episodes must be non-negative'
             )
         self.scene_episode_counts = torch.zeros(
             self.num_envs,
@@ -1665,6 +1642,119 @@ class SceneManager:
             num_positions, 2, device=self.device
         ) * 2.0 - 1.0) * half
         return centers + offsets
+
+    def place_robot_for_goal_stage_6(
+        self,
+        config,
+        env_ids: torch.Tensor,
+        mean_dist: float,
+        min_dist: float,
+        max_dist: float,
+        angle_error: float,
+    ):
+        """
+        Stage 6:
+        - логический радиус до цели равен 0;
+        - используется такое же физическое смещение 1.31 м, как в stage 1;
+        - робот всегда смотрит точно на цель;
+        - угловая ошибка равна 0;
+        - позиция выбирается только внутри допустимой области комнаты.
+        """
+        env_ids = torch.as_tensor(
+            env_ids,
+            device=self.device,
+            dtype=torch.long,
+        )
+        num_envs = env_ids.numel()
+
+        goal_pos = self.goal_positions[env_ids]
+
+        # Нулевой логический радиус, но с физическим смещением,
+        # которое уже используется в stage 1.
+        physical_distance = 1.31
+
+        radii = torch.full(
+            (num_envs, 1),
+            physical_distance,
+            device=self.device,
+            dtype=torch.float32,
+        )
+
+        # 36 возможных позиций вокруг цели.
+        candidates = (
+            goal_pos[:, None, :2]
+            + radii.unsqueeze(1) * self.candidate_vectors
+        )
+
+        spawn_margin = 1.6 + self.robot_radius
+
+        valid = self.room_mapper.positions_in_active_room_interiors(
+            candidates,
+            margin=spawn_margin,
+        )
+
+        has_valid = valid.any(dim=1)
+
+        # Выбираем случайный допустимый угол вокруг цели.
+        weights = valid.float()
+
+        # Временная защита для torch.multinomial.
+        weights[~has_valid, 0] = 1.0
+
+        chosen_angle_idx = torch.multinomial(
+            weights,
+            num_samples=1,
+        ).squeeze(-1)
+
+        batch_indices = torch.arange(
+            num_envs,
+            device=self.device,
+        )
+
+        final_robot_positions = candidates[
+            batch_indices,
+            chosen_angle_idx,
+        ]
+
+        # Если вокруг цели нет допустимой позиции на расстоянии 1.31 м,
+        # используем безопасную позицию внутри активной комнаты.
+        if (~has_valid).any():
+            fallback_count = int((~has_valid).sum().item())
+
+            final_robot_positions[~has_valid] = (
+                self._sample_robot_positions_in_active_rooms(
+                    fallback_count,
+                    wall_margin=spawn_margin,
+                )
+            )
+
+        # Робот смотрит точно на цель: angle_error = 0.
+        direction_to_goal = (
+            goal_pos[:, :2]
+            - final_robot_positions
+        )
+
+        final_yaw = torch.atan2(
+            direction_to_goal[:, 1],
+            direction_to_goal[:, 0],
+        )
+
+        # Quaternion [w, x, y, z].
+        robot_quats = torch.zeros(
+            num_envs,
+            4,
+            device=self.device,
+            dtype=torch.float32,
+        )
+        robot_quats[:, 0] = torch.cos(final_yaw / 2.0)
+        robot_quats[:, 3] = torch.sin(final_yaw / 2.0)
+
+        self.remove_colliding_obstacles(
+            env_ids,
+            final_robot_positions,
+        )
+
+        return final_robot_positions, robot_quats
 
     def place_robot_for_goal_stage_5(
         self,

@@ -20,10 +20,10 @@ class RoomGeometryConfig:
 
     outer_size: float = 20.0
     subroom_size: float = 10.0
-    inner_wall_clearance: float = 1.0
+    inner_wall_clearance: float = 0.5
     allow_inner_corner_cells: bool = True
-    passage_center: float = 3.0
-    passage_width: float = 1.0
+    passage_center: float = 5.0
+    passage_width: float = 1.2
     room_centers: tuple[tuple[float, float, float], ...] = (
         (-5.0, 5.0, 0.0),
         (5.0, 5.0, 0.0),
@@ -83,12 +83,12 @@ class RoomGeometryConfig:
         return cls(
             outer_size=float(cfg.get("outer_size", 20.0)),
             subroom_size=float(cfg.get("subroom_size", 10.0)),
-            inner_wall_clearance=float(cfg.get("inner_wall_clearance", 1.0)),
+            inner_wall_clearance=float(cfg.get("inner_wall_clearance", 0.5)),
             allow_inner_corner_cells=bool(
                 cfg.get("allow_inner_corner_cells", True)
             ),
-            passage_center=float(cfg.get("passage_center", 3.0)),
-            passage_width=float(cfg.get("passage_width", 1.0)),
+            passage_center=float(cfg.get("passage_center", 5.0)),
+            passage_width=float(cfg.get("passage_width", 1.2)),
             room_centers=tuple(centers),
             active_rooms=active_rooms,
         )
@@ -97,13 +97,21 @@ class RoomGeometryConfig:
 class RoomCoordinateMapper:
     """Coordinate transforms and active-room geometry for one Isaac Lab env."""
 
-    # Public room number -> neighbouring room numbers.
     ROOM_NEIGHBOURS = {
         1: (2, 3),
         2: (1, 4),
         3: (1, 4),
         4: (2, 3),
     }
+
+    # Fixed navigation geometry in the common env-local/global frame.
+    # Robot center is valid inside +/-9.5 m. The internal cross walls occupy
+    # +/-0.5 m around each axis. All four doors are always active and each
+    # door is a 1.2 x 1.2 m square centered at (+/-5, 0) or (0, +/-5).
+    NAVIGATION_OUTER_LIMIT = 9.5
+    INNER_WALL_HALF_WIDTH = 0.5
+    PASSAGE_CENTER = 5.0
+    PASSAGE_HALF_SIZE = 0.6
 
     def __init__(
         self,
@@ -126,7 +134,6 @@ class RoomCoordinateMapper:
 
     @property
     def num_rooms(self) -> int:
-        """Number of physical rooms. Always four."""
         return int(self.centers.shape[0])
 
     @property
@@ -160,7 +167,6 @@ class RoomCoordinateMapper:
         local_positions: torch.Tensor,
         room_id: int | torch.Tensor,
     ) -> torch.Tensor:
-        """Translate room-local coordinates to the common 20x20 frame."""
         local_positions = torch.as_tensor(
             local_positions, device=self.device, dtype=torch.float32
         )
@@ -195,12 +201,6 @@ class RoomCoordinateMapper:
         )
 
     def room_ids_from_positions(self, positions: torch.Tensor) -> torch.Tensor:
-        """Map XY positions to quadrant room ids 0..3.
-
-        Points exactly on an axis are assigned by the non-negative side. Wall
-        collision logic is responsible for deciding whether such a point is
-        physically reachable through an open passage.
-        """
         positions = torch.as_tensor(
             positions, device=self.device, dtype=torch.float32
         )
@@ -222,12 +222,6 @@ class RoomCoordinateMapper:
         positions: torch.Tensor,
         margin: float = 0.0,
     ) -> torch.Tensor:
-        """True when each point lies inside an active room rectangle.
-
-        This is intended for reset sampling. The margin is applied to all four
-        walls of each subroom, so reset positions are not generated inside a
-        doorway or close to a wall.
-        """
         positions = torch.as_tensor(
             positions, device=self.device, dtype=torch.float32
         )
@@ -255,37 +249,36 @@ class RoomCoordinateMapper:
         self,
         positions: torch.Tensor,
     ) -> torch.Tensor:
-        """Active-room mask with explicit handling for points on wall axes."""
+        """Return whether robot centers are inside the allowed navigation area.
+
+        The rule is intentionally direct:
+        - reject points outside +/-9.5 m on either axis;
+        - the two internal wall strips are abs(x) <= 0.5 or abs(y) <= 0.5;
+        - a point in a wall strip is valid only inside one of four 1.2 m doors;
+        - all four doors are always active.
+        """
         positions = torch.as_tensor(
             positions, device=self.device, dtype=torch.float32
         )
-        xy = positions[..., :2]
-        active = self.positions_in_active_rooms(xy)
+        x = positions[..., 0]
+        y = positions[..., 1]
 
-        eps = 1e-6
-        on_x_axis = xy[..., 0].abs() <= eps
-        on_y_axis = xy[..., 1].abs() <= eps
-        on_both = on_x_axis & on_y_axis
+        outer = self.NAVIGATION_OUTER_LIMIT
+        wall = self.INNER_WALL_HALF_WIDTH
+        door_center = self.PASSAGE_CENTER
+        door_half = self.PASSAGE_HALF_SIZE
 
-        half_width = 0.5 * self.config.passage_width
-        pc = self.config.passage_center
+        inside_outer = (x.abs() <= outer) & (y.abs() <= outer)
+        inside_wall_strip = (x.abs() <= wall) | (y.abs() <= wall)
 
-        vertical_axis_allowed = torch.zeros_like(active)
-        if self.vertical_passage_open(True):
-            vertical_axis_allowed |= (xy[..., 1] - pc).abs() <= half_width
-        if self.vertical_passage_open(False):
-            vertical_axis_allowed |= (xy[..., 1] + pc).abs() <= half_width
+        inside_door = (
+            ((x.abs() <= door_half) & ((y - door_center).abs() <= door_half))
+            | ((x.abs() <= door_half) & ((y + door_center).abs() <= door_half))
+            | ((y.abs() <= door_half) & ((x - door_center).abs() <= door_half))
+            | ((y.abs() <= door_half) & ((x + door_center).abs() <= door_half))
+        )
 
-        horizontal_axis_allowed = torch.zeros_like(active)
-        if self.horizontal_passage_open(True):
-            horizontal_axis_allowed |= (xy[..., 0] - pc).abs() <= half_width
-        if self.horizontal_passage_open(False):
-            horizontal_axis_allowed |= (xy[..., 0] + pc).abs() <= half_width
-
-        active = torch.where(on_x_axis & ~on_y_axis, vertical_axis_allowed, active)
-        active = torch.where(on_y_axis & ~on_x_axis, horizontal_axis_allowed, active)
-        active = torch.where(on_both, torch.zeros_like(active), active)
-        return active
+        return inside_outer & (~inside_wall_strip | inside_door)
 
     def inner_wall_masks(
         self, global_positions: torch.Tensor
@@ -311,7 +304,6 @@ class RoomCoordinateMapper:
     def allowed_cell_indices(
         self, local_grid: torch.Tensor, room_id: int
     ) -> list[int]:
-        """Grid cells usable for object placement in an active room."""
         if not self.is_room_active(room_id):
             return []
         global_grid = self.local_to_global(local_grid, room_id)

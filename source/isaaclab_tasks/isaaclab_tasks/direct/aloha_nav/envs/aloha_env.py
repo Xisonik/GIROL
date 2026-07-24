@@ -275,8 +275,8 @@ class BaseWheeledRobotEnv(DirectRLEnv):
         self.random_actions = False
         self.scene_manager = SceneManager(self.num_envs, self.config_path, self.device)
 
-        self.CL_ON = CL_ON
-        self.stage = 0
+        self.CL_ON = True #CL_ON #TODO: TOE
+        self.stage = 2
         self.use_staff = self._default_use_staff()
         self.use_obstacles = self._default_use_obstacles()
         self.use_controller = True #kwargs.get('expert', False)
@@ -284,7 +284,7 @@ class BaseWheeledRobotEnv(DirectRLEnv):
         self.cur_angle_error = 0
         self.mean_radius = 0
         self.warm_len = 2000
-        self.my_episode_lenght = 256
+        self.my_episode_lenght = 512
 
         self.turn_on_obstacles = False
         self.turn_on_obstacles_always = False
@@ -733,27 +733,41 @@ class BaseWheeledRobotEnv(DirectRLEnv):
     def _pre_physics_step(self, actions: torch.Tensor):
         r = self.cfg.wheel_radius
         L = self.cfg.wheel_distance
-        self._actions = actions.clone().clamp(-1.0, 1.0)
 
-        nan_mask = torch.isnan(self._actions) | torch.isinf(self._actions)
-        nan_indices = torch.nonzero(
-            nan_mask.any(dim=1), as_tuple=False
-        ).squeeze()
-        if nan_indices.numel() > 0:
-            if self.first_nan:
-                self.first_nan = False
-                print(
-                    f"[MY WARNING] NaN/Inf in actions for envs: "
-                    f"{nan_indices.tolist()}"
-                )
-            self._actions[nan_mask] = 0.0
-            actions[nan_mask] = 0.0
+        # Проверяем исходные actions до clamp:
+        # clamp преобразует Inf в граничное значение и скрывает проблему.
+        raw_actions = actions.clone()
+
+        action_nonfinite = ~torch.isfinite(raw_actions)
+        action_too_large = raw_actions.abs() > 10.0
+        bad_action_rows = (action_nonfinite | action_too_large).any(dim=1)
+
+        if bad_action_rows.any():
+            bad_indices = torch.where(bad_action_rows)[0]
+
+            print(
+                "[ACTION WARNING] "
+                f"envs={bad_indices.tolist()}, "
+                f"values="
+                f"{raw_actions[bad_indices].detach().cpu().tolist()}"
+            )
+
+        # NaN/Inf нельзя передавать дальше.
+        if action_nonfinite.any():
+            raw_actions[action_nonfinite] = 0.0
+            actions[action_nonfinite] = 0.0
+
+        self._actions = raw_actions.clamp(-1.0, 1.0)
 
         if not self.TURN_TASK:
             env_ids = self._robot._ALL_INDICES.clone()
             self._step_update_counter += 1
+
             controlled_mask = torch.tensor(
-                [int(e.item()) in self.controlled_env_ids for e in env_ids],
+                [
+                    int(env_id.item()) in self.controlled_env_ids
+                    for env_id in env_ids
+                ],
                 dtype=torch.bool,
                 device=self.device,
             )
@@ -763,73 +777,142 @@ class BaseWheeledRobotEnv(DirectRLEnv):
 
             if controlled_mask.any() or self.imitation:
                 self.turn_on_controller_step += 1
+
                 quat = self._robot.data.root_quat_w
-                siny_cosp = 2 * (
+
+                siny_cosp = 2.0 * (
                     quat[:, 0] * quat[:, 3]
                     + quat[:, 1] * quat[:, 2]
                 )
-                cosy_cosp = 1 - 2 * (
+                cosy_cosp = 1.0 - 2.0 * (
                     quat[:, 2] * quat[:, 2]
                     + quat[:, 3] * quat[:, 3]
                 )
                 yaw = torch.atan2(siny_cosp, cosy_cosp)
-                lin_sp_all, ang_sp_all = self.control_module.compute_controls(
-                    self.to_local(
-                        self._robot.data.root_pos_w[:, :2], env_ids
-                    ),
-                    yaw,
+
+                lin_sp_all, ang_sp_all = (
+                    self.control_module.compute_controls(
+                        self.to_local(
+                            self._robot.data.root_pos_w[:, :2],
+                            env_ids,
+                        ),
+                        yaw,
+                    )
                 )
+
+                # Проверяем выход контроллера.
+                controller_nonfinite = (
+                    ~torch.isfinite(lin_sp_all)
+                    | ~torch.isfinite(ang_sp_all)
+                )
+                controller_too_large = (
+                    (lin_sp_all.abs() > 10.0)
+                    | (ang_sp_all.abs() > 10.0)
+                )
+                bad_controller = (
+                    controller_nonfinite | controller_too_large
+                )
+
+                if bad_controller.any():
+                    bad_indices = torch.where(bad_controller)[0]
+
+                    print(
+                        "[CONTROLLER WARNING] "
+                        f"envs={bad_indices.tolist()}, "
+                        f"linear="
+                        f"{lin_sp_all[bad_indices].detach().cpu().tolist()}, "
+                        f"angular="
+                        f"{ang_sp_all[bad_indices].detach().cpu().tolist()}"
+                    )
+
+                # Только NaN/Inf заменяем нулями.
+                # Конечные значения с abs > 10 оставляем без изменения.
+                if controller_nonfinite.any():
+                    lin_sp_all = lin_sp_all.clone()
+                    ang_sp_all = ang_sp_all.clone()
+
+                    lin_sp_all[
+                        ~torch.isfinite(lin_sp_all)
+                    ] = 0.0
+                    ang_sp_all[
+                        ~torch.isfinite(ang_sp_all)
+                    ] = 0.0
+
                 controlled_indices = torch.where(controlled_mask)[0]
+
                 linear_speed[controlled_indices] = lin_sp_all[
                     controlled_indices
                 ]
                 angular_speed[controlled_indices] = ang_sp_all[
                     controlled_indices
                 ]
+
                 self._actions[controlled_indices, 0] = (
                     linear_speed[controlled_indices] / 0.6
                 ) - 1.0
                 self._actions[controlled_indices, 1] = (
                     angular_speed[controlled_indices] / 2.0
                 )
-                actions.copy_(self._actions.clamp(-1.0, 1.0))
+
+                actions.copy_(
+                    self._actions.clamp(-1.0, 1.0)
+                )
+
         else:
-            linear_speed = torch.zeros_like(self._actions[:, 0])
-            angular_speed = 2.0 * self._actions[:, 1] 
+            linear_speed = torch.zeros_like(
+                self._actions[:, 0]
+            )
+            angular_speed = 2.0 * self._actions[:, 1]
+
             if self.DEF_TURN:
-                angular_speed = torch.full_like(angular_speed, -2.0)
+                angular_speed = torch.full_like(
+                    angular_speed,
+                    -2.0,
+                )
 
         root_quat_w = self._robot.data.root_quat_w
-        siny_cosp = 2 * (
+
+        siny_cosp = 2.0 * (
             root_quat_w[:, 0] * root_quat_w[:, 3]
             + root_quat_w[:, 1] * root_quat_w[:, 2]
         )
-        cosy_cosp = 1 - 2 * (
+        cosy_cosp = 1.0 - 2.0 * (
             root_quat_w[:, 2] * root_quat_w[:, 2]
             + root_quat_w[:, 3] * root_quat_w[:, 3]
         )
-        current_yaw = torch.atan2(siny_cosp, cosy_cosp)
-
-        collision_result = self.collision_manager.evaluate_velocity(
-            current_pos_w=self._robot.data.root_pos_w.clone(),
-            current_yaw=current_yaw,
-            linear_speed=linear_speed,
-            angular_speed=angular_speed,
-            turn_task=self.TURN_TASK,
+        current_yaw = torch.atan2(
+            siny_cosp,
+            cosy_cosp,
         )
 
-        # GT mode rejects the predicted invalid command. Contact mode always
-        # returns an all-False invalid mask and lets physics execute it.
+        collision_result = (
+            self.collision_manager.evaluate_velocity(
+                current_pos_w=(
+                    self._robot.data.root_pos_w.clone()
+                ),
+                current_yaw=current_yaw,
+                linear_speed=linear_speed,
+                angular_speed=angular_speed,
+                turn_task=self.TURN_TASK,
+            )
+        )
+
+        # В GT-режиме запрещённая команда блокируется.
+        # В contact-режиме invalid_action всегда False.
         invalid_action = collision_result.invalid_action
+
         linear_speed = linear_speed.clone()
         angular_speed = angular_speed.clone()
+
         linear_speed[invalid_action] = 0.0
         angular_speed[invalid_action] = 0.0
 
         self.angular_speed = angular_speed
         self.velocities = torch.stack(
-            [linear_speed, angular_speed], dim=1
+            [linear_speed, angular_speed],
+            dim=1,
         )
+
         self._left_wheel_vel = (
             linear_speed - angular_speed * L / 2.0
         ) / r
@@ -902,7 +985,7 @@ class BaseWheeledRobotEnv(DirectRLEnv):
         return torch.stack([rx_new, ry_new, rz_new], dim=1)
 
 
-    def goal_reached(self, angle_threshold: float = 20, radius_threshold: float = 1.3, get_num_subs=False):
+    def goal_reached(self, angle_threshold: float = 20, radius_threshold: float = 1.5, get_num_subs=False):
         """
         Проверяет достижение цели с учётом расстояния и направления взгляда робота.
         distance_to_goal: [N] расстояния до цели

@@ -60,8 +60,8 @@ class CollisionManager:
         agent_radius: float = 0.4,
         collision_margin: float = 0.03,
         contact_force_threshold: float = 0.05,
-        passage_center: float = 3.0,
-        passage_width: float = 1.0,
+        passage_center: float = 5.0,
+        passage_width: float = 1.2,
         exclude_goal: bool = True,
         contact_forces_getter: Callable[[], torch.Tensor | None] | None = None,
     ) -> None:
@@ -96,6 +96,8 @@ class CollisionManager:
         self.agent_radius = float(agent_radius)
         self.collision_margin = float(collision_margin)
         self.contact_force_threshold = float(contact_force_threshold)
+        # Kept in the constructor for backward-compatible config loading.
+        # Actual wall/door geometry is centralized in RoomCoordinateMapper.
         self.passage_center = float(passage_center)
         self.passage_width = float(passage_width)
         self.exclude_goal = bool(exclude_goal)
@@ -347,22 +349,38 @@ class CollisionManager:
     def check_out_of_bounds(
         self, candidate_pos_w: torch.Tensor
     ) -> torch.Tensor:
+        """Check the single centralized navigation-area rule."""
         candidate_pos_l = self.to_local(candidate_pos_w)
-        x = candidate_pos_l[:, 0]
-        y = candidate_pos_l[:, 1]
+        inside_navigation_area = (
+            self.scene_manager.positions_in_active_navigation_area(
+                candidate_pos_l
+            )
+        )
+        return ~inside_navigation_area
 
-        bounds = self.scene_manager.room_bounds
-        clearance = self.agent_radius + self.collision_margin
-        inside_outer = (
-            (x >= bounds["x_min"] + clearance)
-            & (x <= bounds["x_max"] - clearance)
-            & (y >= bounds["y_min"] + clearance)
-            & (y <= bounds["y_max"] - clearance)
-        )
-        inside_active = self.scene_manager.positions_in_active_navigation_area(
-            candidate_pos_l
-        )
-        return ~(inside_outer & inside_active)
+    @staticmethod
+    def _segment_interval_inside_strip(
+        start: torch.Tensor,
+        end: torch.Tensor,
+        half_width: float,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Return segment t-interval lying inside [-half_width, half_width]."""
+        delta = end - start
+        eps = torch.finfo(start.dtype).eps
+        moving = delta.abs() > eps
+        safe_delta = torch.where(moving, delta, torch.ones_like(delta))
+
+        t_a = (-half_width - start) / safe_delta
+        t_b = (half_width - start) / safe_delta
+        t_enter = torch.maximum(torch.minimum(t_a, t_b), torch.zeros_like(start))
+        t_exit = torch.minimum(torch.maximum(t_a, t_b), torch.ones_like(start))
+        intersects = moving & (t_enter <= t_exit)
+
+        stationary_inside = (~moving) & (start.abs() <= half_width)
+        t_enter = torch.where(stationary_inside, torch.zeros_like(t_enter), t_enter)
+        t_exit = torch.where(stationary_inside, torch.ones_like(t_exit), t_exit)
+        intersects |= stationary_inside
+        return intersects, t_enter, t_exit
 
     def check_inner_wall_collision(
         self,
@@ -370,71 +388,40 @@ class CollisionManager:
         current_pos_w: torch.Tensor,
         candidate_pos_w: torch.Tensor,
     ) -> torch.Tensor:
-        """Swept-segment check against the two internal cross walls."""
-        current_l = self.to_local(current_pos_w)[:, :2]
-        candidate_l = self.to_local(candidate_pos_w)[:, :2]
+        """Reject a segment crossing a wall strip outside a 1.2 m door square."""
+        current = self.to_local(current_pos_w)[:, :2]
+        candidate = self.to_local(candidate_pos_w)[:, :2]
+        mapper = self.scene_manager.room_mapper
 
-        x0, y0 = current_l[:, 0], current_l[:, 1]
-        x1, y1 = candidate_l[:, 0], candidate_l[:, 1]
-        dx, dy = x1 - x0, y1 - y0
+        wall = float(mapper.INNER_WALL_HALF_WIDTH)
+        door_center = float(mapper.PASSAGE_CENTER)
+        door_half = float(mapper.PASSAGE_HALF_SIZE)
 
-        clearance = self.agent_radius + self.collision_margin
-        usable_half_passage = 0.5 * self.passage_width - clearance
+        x_hit, tx0, tx1 = self._segment_interval_inside_strip(
+            current[:, 0], candidate[:, 0], wall
+        )
+        y_at_x0 = current[:, 1] + tx0 * (candidate[:, 1] - current[:, 1])
+        y_at_x1 = current[:, 1] + tx1 * (candidate[:, 1] - current[:, 1])
+        vertical_door = (
+            (((y_at_x0 - door_center).abs() <= door_half)
+             & ((y_at_x1 - door_center).abs() <= door_half))
+            | (((y_at_x0 + door_center).abs() <= door_half)
+               & ((y_at_x1 + door_center).abs() <= door_half))
+        )
 
-        if usable_half_passage <= 0.0:
-            vertical_open = torch.zeros_like(x0, dtype=torch.bool)
-            horizontal_open = torch.zeros_like(x0, dtype=torch.bool)
-        else:
-            eps = torch.finfo(current_l.dtype).eps
+        y_hit, ty0, ty1 = self._segment_interval_inside_strip(
+            current[:, 1], candidate[:, 1], wall
+        )
+        x_at_y0 = current[:, 0] + ty0 * (candidate[:, 0] - current[:, 0])
+        x_at_y1 = current[:, 0] + ty1 * (candidate[:, 0] - current[:, 0])
+        horizontal_door = (
+            (((x_at_y0 - door_center).abs() <= door_half)
+             & ((x_at_y1 - door_center).abs() <= door_half))
+            | (((x_at_y0 + door_center).abs() <= door_half)
+               & ((x_at_y1 + door_center).abs() <= door_half))
+        )
 
-            safe_dx = torch.where(dx.abs() > eps, dx, torch.ones_like(dx))
-            tx = torch.clamp(-x0 / safe_dx, 0.0, 1.0)
-            tx = torch.where(dx.abs() > eps, tx, torch.zeros_like(tx))
-            y_at_vertical_wall = y0 + tx * dy
-
-            upper_vertical_open = (
-                torch.abs(y_at_vertical_wall - self.passage_center)
-                <= usable_half_passage
-            )
-            lower_vertical_open = (
-                torch.abs(y_at_vertical_wall + self.passage_center)
-                <= usable_half_passage
-            )
-            if not self.scene_manager.room_mapper.vertical_passage_open(True):
-                upper_vertical_open &= False
-            if not self.scene_manager.room_mapper.vertical_passage_open(False):
-                lower_vertical_open &= False
-            vertical_open = upper_vertical_open | lower_vertical_open
-
-            safe_dy = torch.where(dy.abs() > eps, dy, torch.ones_like(dy))
-            ty = torch.clamp(-y0 / safe_dy, 0.0, 1.0)
-            ty = torch.where(dy.abs() > eps, ty, torch.zeros_like(ty))
-            x_at_horizontal_wall = x0 + ty * dx
-
-            right_horizontal_open = (
-                torch.abs(x_at_horizontal_wall - self.passage_center)
-                <= usable_half_passage
-            )
-            left_horizontal_open = (
-                torch.abs(x_at_horizontal_wall + self.passage_center)
-                <= usable_half_passage
-            )
-            if not self.scene_manager.room_mapper.horizontal_passage_open(True):
-                right_horizontal_open &= False
-            if not self.scene_manager.room_mapper.horizontal_passage_open(False):
-                left_horizontal_open &= False
-            horizontal_open = right_horizontal_open | left_horizontal_open
-
-        touches_vertical_wall = (
-            torch.minimum(x0, x1) <= clearance
-        ) & (torch.maximum(x0, x1) >= -clearance)
-        touches_horizontal_wall = (
-            torch.minimum(y0, y1) <= clearance
-        ) & (torch.maximum(y0, y1) >= -clearance)
-
-        vertical_collision = touches_vertical_wall & (~vertical_open)
-        horizontal_collision = touches_horizontal_wall & (~horizontal_open)
-        return vertical_collision | horizontal_collision
+        return (x_hit & ~vertical_door) | (y_hit & ~horizontal_door)
 
     def read_contact_collision(self) -> torch.Tensor:
         if self.contact_forces_getter is None:

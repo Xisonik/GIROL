@@ -41,8 +41,8 @@
     ],
     "inner_wall_clearance": 1.0,
     "allow_inner_corner_cells": true,
-    "passage_center": 3.0,
-    "passage_width": 1.0
+    "passage_center": 5,
+    "passage_width": 1
   },
   "object_orientation": {
     "enabled": true,

@@ -4,6 +4,7 @@ import argparse
 import json
 import math
 import time
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -15,6 +16,18 @@ Point3 = Tuple[float, float, float]
 PathMap = Dict[str, Dict[str, List[GridNode]]]
 
 
+@dataclass(frozen=True)
+class TargetApproach:
+    """Target-specific path endpoint and mandatory final approach corridor."""
+
+    goal_real: Point3
+    room_center: Point3
+    anchor_node: GridNode
+    approach_node: GridNode
+    approach_distance_used: float
+    corridor_nodes: Tuple[GridNode, ...]
+
+
 class FixedFourRoomPathGenerator:
     """Generate one path database for a fixed four-room geometry.
 
@@ -22,9 +35,12 @@ class FixedFourRoomPathGenerator:
 
         {target_node: {start_node: path}}
 
-    All four local chair cells are treated as occupied in every room, so the
-    database is conservative when the runtime scene contains fewer chairs.
-    Random staff objects are intentionally ignored.
+    All local obstacle cells are treated as occupied in every room, so the
+    database is conservative when the runtime scene contains fewer obstacles.
+    A configurable wall-side strip is excluded from the base graph. For every
+    physical goal, a target-specific straight corridor is appended so the robot
+    approaches from the room-center side. Random staff objects are intentionally
+    ignored.
     """
 
     def __init__(
@@ -36,8 +52,14 @@ class FixedFourRoomPathGenerator:
         robot_radius: float = 0.18,
         collision_margin: float = 0.03,
         tracking_margin: float = 0.12,
+        obstacle_center_clearance: float = 0.8,
+        wall_obstacle_depth: float = 1.5,
+        approach_distance: float = 1.31,
+        final_corridor_length: float = 1.5,
+        min_final_corridor_length: float = 0.5,
         passage_center: float | None = None,
-        passage_width: float = 1.0,
+        passage_width: float | None = None,
+        navigation_outer_limit: float = 9.5,
         save_dir: str = "data",
         paths_filename: str = "all_paths.json",
         graphs_dir: str = "logs/aloha_data_graphs/graphs",
@@ -49,8 +71,14 @@ class FixedFourRoomPathGenerator:
         self.robot_radius = float(robot_radius)
         self.collision_margin = float(collision_margin)
         self.tracking_margin = float(tracking_margin)
+        self.obstacle_center_clearance = float(obstacle_center_clearance)
+        self.wall_obstacle_depth = float(wall_obstacle_depth)
+        self.approach_distance = float(approach_distance)
+        self.final_corridor_length = float(final_corridor_length)
+        self.min_final_corridor_length = float(min_final_corridor_length)
         self.passage_center = passage_center
-        self.passage_width = float(passage_width)
+        self.passage_width = passage_width
+        self.navigation_outer_limit = float(navigation_outer_limit)
         self.limit_start_nodes = limit_start_nodes
 
         if self.ratio <= 0:
@@ -59,8 +87,20 @@ class FixedFourRoomPathGenerator:
             raise ValueError(
                 "robot_radius, collision_margin and tracking_margin must be non-negative"
             )
-        if self.passage_width <= 0:
-            raise ValueError("passage_width must be positive")
+        if self.obstacle_center_clearance <= 0:
+            raise ValueError("obstacle_center_clearance must be positive")
+        if self.wall_obstacle_depth < 0:
+            raise ValueError("wall_obstacle_depth must be non-negative")
+        if self.approach_distance <= 0:
+            raise ValueError("approach_distance must be positive")
+        if self.min_final_corridor_length <= 0:
+            raise ValueError("min_final_corridor_length must be positive")
+        if self.final_corridor_length < self.min_final_corridor_length:
+            raise ValueError(
+                "final_corridor_length must be >= min_final_corridor_length"
+            )
+        if self.navigation_outer_limit <= 0:
+            raise ValueError("navigation_outer_limit must be positive")
 
         with self.scene_items_path.open("r", encoding="utf-8") as f:
             self.scene_cfg = json.load(f)
@@ -103,11 +143,21 @@ class FixedFourRoomPathGenerator:
         self.active_room_indices = tuple(int(room) - 1 for room in active_room_numbers)
         self.active_room_centers = [self.room_centers[i] for i in self.active_room_indices]
 
-        if self.passage_center is None:
-            self.passage_center = float(room_cfg.get("passage_center", 3.0))
-        else:
-            self.passage_center = float(self.passage_center)
-        self.passage_width = float(room_cfg.get("passage_width", self.passage_width))
+        # Keep the offline planner synchronized with RoomCoordinateMapper's
+        # centralized navigation geometry. Do not inherit stale 3.0/1.0 values
+        # from older layout_rules.json files.
+        self.passage_center = (
+            5.0 if self.passage_center is None else float(self.passage_center)
+        )
+        self.passage_width = (
+            1.2 if self.passage_width is None else float(self.passage_width)
+        )
+        if self.passage_width <= 0:
+            raise ValueError("passage_width must be positive")
+        if self.navigation_outer_limit > self.half_extent:
+            raise ValueError(
+                "navigation_outer_limit cannot exceed the map half extent"
+            )
 
         self.grids = self.rules.get("grids", {})
         self.semantic_blocks = self.rules.get("semantic_blocks", {})
@@ -122,7 +172,9 @@ class FixedFourRoomPathGenerator:
         ) = self._collect_obstacle_configuration()
         self.local_goal_grid = self._collect_goal_grid()
 
-        self.obstacle_radius = self._max_radius_for_objects(obstacle_object_names)
+        # Minimum allowed center-to-center distance between the robot and an obstacle.
+        # This is a complete clearance value, so robot radius and other margins are
+        # not added to it in obstacle collision checks.
         self.obstacles = self._expand_fixed_obstacles()
         self.targets_real = self._expand_targets()
         if not self.targets_real:
@@ -188,40 +240,27 @@ class FixedFourRoomPathGenerator:
             raise RuntimeError("No goal grid coordinates found in semantic_blocks")
         return sorted(coordinates)
 
-    def _max_radius_for_objects(self, object_names: set[str]) -> float:
-        if not object_names:
-            return 0.0
-
-        radii: List[float] = []
-        found_names: set[str] = set()
-        for obj in self.scene_cfg.get("objects", []):
-            name = obj.get("name")
-            if name not in object_names:
-                continue
-            size = obj.get("size")
-            if not size or len(size) < 2:
-                raise RuntimeError(f"Object {name!r} has no valid XY size")
-            radii.append(math.hypot(float(size[0]) * 0.5, float(size[1]) * 0.5))
-            found_names.add(str(name))
-
-        missing = sorted(object_names.difference(found_names))
-        if missing:
-            raise RuntimeError(
-                f"Obstacle objects referenced by semantic blocks are missing "
-                f"from scene_items.json: {missing}"
-            )
-        return max(radii)
-
-    def _point_in_active_room(self, x: float, y: float) -> bool:
+    def _room_center_for_point(self, x: float, y: float) -> Optional[Point3]:
+        """Return the active room containing a point, choosing the nearest on boundaries."""
         half = 0.5 * self.subroom_size
         eps = 1e-9
-        for cx, cy, _ in self.active_room_centers:
+        candidates: List[Point3] = []
+        for center in self.active_room_centers:
+            cx, cy, _ = center
             if (
                 cx - half - eps <= x <= cx + half + eps
                 and cy - half - eps <= y <= cy + half + eps
             ):
-                return True
-        return False
+                candidates.append(center)
+        if not candidates:
+            return None
+        return min(
+            candidates,
+            key=lambda c: (x - c[0]) ** 2 + (y - c[1]) ** 2,
+        )
+
+    def _point_in_active_room(self, x: float, y: float) -> bool:
+        return self._room_center_for_point(x, y) is not None
 
     def _local_to_full(self, local: Point3, center: Point3) -> Point3:
         return local[0] + center[0], local[1] + center[1], local[2] + center[2]
@@ -233,10 +272,23 @@ class FixedFourRoomPathGenerator:
             return False
         return near_x or near_y
 
+    def _local_point_is_in_wall_obstacle_band(self, local: Point3) -> bool:
+        """Return whether an obstacle belongs to the wall-side 1.5 m band."""
+        half = 0.5 * self.subroom_size
+        return (
+            half - abs(local[0]) <= self.wall_obstacle_depth + 1e-9
+            or half - abs(local[1]) <= self.wall_obstacle_depth + 1e-9
+        )
+
     def _expand_fixed_obstacles(self) -> List[Point3]:
         out: List[Point3] = []
         for center in self.active_room_centers:
             for local in self.local_obstacle_grid:
+                # Wall-side objects are represented by the continuous wall band.
+                # Keeping their center circles as well would double-inflate them
+                # and can close door lanes that runtime placement leaves clear.
+                if self._local_point_is_in_wall_obstacle_band(local):
+                    continue
                 point = self._local_to_full(local, center)
                 if not self._forbidden_near_inner_wall(point):
                     out.append(point)
@@ -271,6 +323,12 @@ class FixedFourRoomPathGenerator:
         return self.robot_radius + self.collision_margin + self.tracking_margin
 
     @property
+    def inner_wall_center_clearance(self) -> float:
+        # Runtime navigation excludes the fixed +/-0.5 m inner-wall strip.
+        # Inflate it for robot footprint and path-tracking error.
+        return 0.5 + self.footprint_clearance
+
+    @property
     def usable_passage_half_width(self) -> float:
         return self.passage_width * 0.5 - self.footprint_clearance
 
@@ -293,26 +351,63 @@ class FixedFourRoomPathGenerator:
         )
 
     def _point_collides_with_wall(self, x: float, y: float) -> bool:
-        c = self.footprint_clearance
+        c = self.inner_wall_center_clearance
         vertical_blocked = abs(x) <= c and not self._in_vertical_opening(y)
         horizontal_blocked = abs(y) <= c and not self._in_horizontal_opening(x)
         return vertical_blocked or horizontal_blocked
 
     def _point_collides_with_obstacle(self, x: float, y: float) -> bool:
-        inflated = self.obstacle_radius + self.footprint_clearance
-        inflated2 = inflated * inflated
+        clearance2 = self.obstacle_center_clearance * self.obstacle_center_clearance
         for ox, oy, _ in self.obstacles:
-            if (x - ox) ** 2 + (y - oy) ** 2 < inflated2:
+            if (x - ox) ** 2 + (y - oy) ** 2 < clearance2:
                 return True
         return False
 
-    def _point_is_valid(self, node: GridNode) -> bool:
-        x, y = self.grid_to_real(node)
-        c = self.footprint_clearance
-        b = self.room_bounds
+    def _point_collides_with_wall_obstacle_strip(self, x: float, y: float) -> bool:
+        """Model furniture occupying 1.5 m inward from room walls.
+
+        The robot-center exclusion depth additionally includes footprint and
+        tracking clearance. Door access lanes through the two internal walls
+        remain open. Target-specific final corridors may explicitly bypass this
+        rule, but never physical walls or explicit obstacle circles.
+        """
+        center = self._room_center_for_point(x, y)
+        if center is None:
+            return False
+
+        cx, cy, _ = center
+        half = 0.5 * self.subroom_size
+        local_x = x - cx
+        local_y = y - cy
+        strip = self.wall_obstacle_depth + self.footprint_clearance
+        eps = 1e-9
+
+        x_blocked = half - abs(local_x) <= strip + eps
+        if x_blocked:
+            wall_x = cx + (half if local_x >= 0.0 else -half)
+            is_inner_x_wall = abs(wall_x) <= eps
+            if is_inner_x_wall and self._in_vertical_opening(y):
+                x_blocked = False
+
+        y_blocked = half - abs(local_y) <= strip + eps
+        if y_blocked:
+            wall_y = cy + (half if local_y >= 0.0 else -half)
+            is_inner_y_wall = abs(wall_y) <= eps
+            if is_inner_y_wall and self._in_horizontal_opening(x):
+                y_blocked = False
+
+        return x_blocked or y_blocked
+
+    def _point_is_valid_xy(
+        self,
+        x: float,
+        y: float,
+        *,
+        allow_wall_obstacle_strip: bool = False,
+    ) -> bool:
         if not (
-            b["x_min"] + c <= x <= b["x_max"] - c
-            and b["y_min"] + c <= y <= b["y_max"] - c
+            -self.navigation_outer_limit <= x <= self.navigation_outer_limit
+            and -self.navigation_outer_limit <= y <= self.navigation_outer_limit
         ):
             return False
         if not self._point_in_active_room(x, y):
@@ -321,7 +416,16 @@ class FixedFourRoomPathGenerator:
             return False
         if self._point_collides_with_obstacle(x, y):
             return False
+        if (
+            not allow_wall_obstacle_strip
+            and self._point_collides_with_wall_obstacle_strip(x, y)
+        ):
+            return False
         return True
+
+    def _point_is_valid(self, node: GridNode) -> bool:
+        x, y = self.grid_to_real(node)
+        return self._point_is_valid_xy(x, y)
 
     @staticmethod
     def _point_segment_distance_sq(
@@ -344,10 +448,9 @@ class FixedFourRoomPathGenerator:
         return (px - qx) ** 2 + (py - qy) ** 2
 
     def _segment_hits_obstacle(self, a: Tuple[float, float], b: Tuple[float, float]) -> bool:
-        inflated = self.obstacle_radius + self.footprint_clearance
-        inflated2 = inflated * inflated
+        clearance2 = self.obstacle_center_clearance * self.obstacle_center_clearance
         for ox, oy, _ in self.obstacles:
-            if self._point_segment_distance_sq(ox, oy, a[0], a[1], b[0], b[1]) < inflated2:
+            if self._point_segment_distance_sq(ox, oy, a[0], a[1], b[0], b[1]) < clearance2:
                 return True
         return False
 
@@ -365,7 +468,7 @@ class FixedFourRoomPathGenerator:
         return a_other + t * (b_other - a_other)
 
     def _segment_hits_inner_wall(self, a: Tuple[float, float], b: Tuple[float, float]) -> bool:
-        c = self.footprint_clearance
+        c = self.inner_wall_center_clearance
         ax, ay = a
         bx, by = b
 
@@ -383,14 +486,37 @@ class FixedFourRoomPathGenerator:
 
         return False
 
+    def _segment_real_is_valid(
+        self,
+        a: Tuple[float, float],
+        b: Tuple[float, float],
+        *,
+        allow_wall_obstacle_strip: bool = False,
+    ) -> bool:
+        if self._segment_hits_inner_wall(a, b):
+            return False
+        if self._segment_hits_obstacle(a, b):
+            return False
+
+        distance = math.hypot(b[0] - a[0], b[1] - a[1])
+        sample_spacing = 0.5 / self.ratio
+        steps = max(1, int(math.ceil(distance / sample_spacing)))
+        for i in range(steps + 1):
+            t = i / steps
+            x = a[0] + t * (b[0] - a[0])
+            y = a[1] + t * (b[1] - a[1])
+            if not self._point_is_valid_xy(
+                x,
+                y,
+                allow_wall_obstacle_strip=allow_wall_obstacle_strip,
+            ):
+                return False
+        return True
+
     def _segment_is_valid(self, u: GridNode, v: GridNode) -> bool:
-        a = self.grid_to_real(u)
-        b = self.grid_to_real(v)
-        midpoint = ((a[0] + b[0]) * 0.5, (a[1] + b[1]) * 0.5)
-        return not (
-            not self._point_in_active_room(midpoint[0], midpoint[1])
-            or self._segment_hits_inner_wall(a, b)
-            or self._segment_hits_obstacle(a, b)
+        return self._segment_real_is_valid(
+            self.grid_to_real(u),
+            self.grid_to_real(v),
         )
 
     def _build_graph(self) -> nx.Graph:
@@ -447,10 +573,149 @@ class FixedFourRoomPathGenerator:
         out.append(path[-1])
         return out
 
+    @staticmethod
+    def _grid_line(a: GridNode, b: GridNode) -> List[GridNode]:
+        """Return a dense 8-connected integer line including both endpoints."""
+        dx = b[0] - a[0]
+        dy = b[1] - a[1]
+        steps = max(abs(dx), abs(dy))
+        if steps == 0:
+            return [a]
+
+        out: List[GridNode] = []
+        for i in range(steps + 1):
+            t = i / steps
+            node = (
+                int(round(a[0] + t * dx)),
+                int(round(a[1] + t * dy)),
+            )
+            if not out or node != out[-1]:
+                out.append(node)
+        return out
+
+    def _corridor_is_valid(
+        self,
+        corridor: List[GridNode],
+        goal_real: Point3,
+    ) -> bool:
+        if not corridor:
+            return False
+
+        previous_goal_distance = float("inf")
+        for node in corridor:
+            x, y = self.grid_to_real(node)
+            if not self._point_is_valid_xy(
+                x,
+                y,
+                allow_wall_obstacle_strip=True,
+            ):
+                return False
+            goal_distance = math.hypot(x - goal_real[0], y - goal_real[1])
+            if goal_distance > previous_goal_distance + (1.0 / self.ratio):
+                return False
+            previous_goal_distance = goal_distance
+
+        for u, v in zip(corridor, corridor[1:]):
+            if max(abs(v[0] - u[0]), abs(v[1] - u[1])) > 1:
+                return False
+            if not self._segment_real_is_valid(
+                self.grid_to_real(u),
+                self.grid_to_real(v),
+                allow_wall_obstacle_strip=True,
+            ):
+                return False
+        return True
+
+    def _corridor_lengths(self) -> List[float]:
+        step = 1.0 / self.ratio
+        lengths: List[float] = []
+        value = self.final_corridor_length
+        while value >= self.min_final_corridor_length - 1e-9:
+            lengths.append(value)
+            value -= step
+        if not lengths or abs(lengths[-1] - self.min_final_corridor_length) > 1e-9:
+            lengths.append(self.min_final_corridor_length)
+        return lengths
+
+    def _build_target_approach(
+        self,
+        graph: nx.Graph,
+        goal_real: Point3,
+    ) -> TargetApproach:
+        room_center = self._room_center_for_point(goal_real[0], goal_real[1])
+        if room_center is None:
+            raise RuntimeError(f"Goal {goal_real} is outside all active rooms")
+
+        vx = room_center[0] - goal_real[0]
+        vy = room_center[1] - goal_real[1]
+        norm = math.hypot(vx, vy)
+        if norm <= 1e-9:
+            raise RuntimeError(
+                f"Goal {goal_real} coincides with room center; "
+                "a unique center-side approach direction does not exist"
+            )
+        inward = (vx / norm, vy / norm)
+
+        grid_step = 1.0 / self.ratio
+        max_approach_extra = max(self.obstacle_center_clearance, grid_step)
+        max_anchor_extension = 0.5 * self.subroom_size
+        approach_extra = 0.0
+
+        while approach_extra <= max_approach_extra + 1e-9:
+            approach_distance = self.approach_distance + approach_extra
+            approach_real = (
+                goal_real[0] + inward[0] * approach_distance,
+                goal_real[1] + inward[1] * approach_distance,
+            )
+            approach_node = self.real_to_grid(approach_real)
+            approach_xy = self.grid_to_real(approach_node)
+            if not self._point_is_valid_xy(
+                approach_xy[0],
+                approach_xy[1],
+                allow_wall_obstacle_strip=True,
+            ):
+                approach_extra += grid_step
+                continue
+
+            for corridor_length in self._corridor_lengths():
+                extension = 0.0
+                while extension <= max_anchor_extension + 1e-9:
+                    anchor_real = (
+                        approach_real[0]
+                        + inward[0] * (corridor_length + extension),
+                        approach_real[1]
+                        + inward[1] * (corridor_length + extension),
+                    )
+                    anchor_node = self.real_to_grid(anchor_real)
+                    if anchor_node in graph and graph.degree(anchor_node) > 0:
+                        corridor = self._grid_line(anchor_node, approach_node)
+                        if self._corridor_is_valid(corridor, goal_real):
+                            return TargetApproach(
+                                goal_real=goal_real,
+                                room_center=room_center,
+                                anchor_node=anchor_node,
+                                approach_node=approach_node,
+                                approach_distance_used=math.hypot(
+                                    approach_xy[0] - goal_real[0],
+                                    approach_xy[1] - goal_real[1],
+                                ),
+                                corridor_nodes=tuple(corridor),
+                            )
+                    extension += grid_step
+            approach_extra += grid_step
+
+        raise RuntimeError(
+            f"No collision-free center-side final corridor for goal {goal_real}. "
+            f"Tried approach distances {self.approach_distance:.2f}.."
+            f"{self.approach_distance + max_approach_extra:.2f} m and corridor "
+            f"lengths {self.min_final_corridor_length:.2f}.."
+            f"{self.final_corridor_length:.2f} m."
+        )
+
     def _save_debug_graph(
         self,
         graph: nx.Graph,
-        target: GridNode,
+        approach: TargetApproach,
         sample_path: Optional[List[GridNode]],
         index: int,
     ) -> None:
@@ -467,24 +732,47 @@ class FixedFourRoomPathGenerator:
             ax.add_patch(
                 Circle(
                     (ox, oy),
-                    self.obstacle_radius + self.footprint_clearance,
+                    self.obstacle_center_clearance,
                     fill=False,
                     linewidth=1.0,
                 )
             )
 
-        target_real = self.grid_to_real(target)
-        ax.scatter([target_real[0]], [target_real[1]], s=55, marker="*")
+        goal = approach.goal_real
+        approach_real = self.grid_to_real(approach.approach_node)
+        anchor_real = self.grid_to_real(approach.anchor_node)
+        ax.scatter([goal[0]], [goal[1]], s=65, marker="*")
+        ax.scatter([approach_real[0]], [approach_real[1]], s=38, marker="o")
+        ax.scatter([anchor_real[0]], [anchor_real[1]], s=38, marker="s")
+
+        corridor_real = [self.grid_to_real(n) for n in approach.corridor_nodes]
+        ax.plot(
+            [p[0] for p in corridor_real],
+            [p[1] for p in corridor_real],
+            linewidth=2.4,
+        )
 
         if sample_path:
             path_real = [self.grid_to_real(n) for n in sample_path]
-            ax.plot([p[0] for p in path_real], [p[1] for p in path_real], linewidth=1.5)
+            ax.plot(
+                [p[0] for p in path_real],
+                [p[1] for p in path_real],
+                linewidth=1.5,
+            )
 
         ax.axvline(0.0, linewidth=0.8)
         ax.axhline(0.0, linewidth=0.8)
-        ax.set_xlim(self.room_bounds["x_min"] - 0.5, self.room_bounds["x_max"] + 0.5)
-        ax.set_ylim(self.room_bounds["y_min"] - 0.5, self.room_bounds["y_max"] + 0.5)
-        ax.set_title(f"Fixed four-room graph, target={target_real}")
+        ax.set_xlim(
+            self.room_bounds["x_min"] - 0.5,
+            self.room_bounds["x_max"] + 0.5,
+        )
+        ax.set_ylim(
+            self.room_bounds["y_min"] - 0.5,
+            self.room_bounds["y_max"] + 0.5,
+        )
+        ax.set_title(
+            "Fixed graph: goal star, approach circle, corridor anchor square"
+        )
         fig.tight_layout()
         fig.savefig(self.graphs_dir / f"fixed_graph_target_{index}.png")
         plt.close(fig)
@@ -492,48 +780,77 @@ class FixedFourRoomPathGenerator:
     def generate(self, *, save_graph_images: bool = True) -> str:
         started = time.perf_counter()
         print(f"Generate start: {datetime.now().strftime('%H:%M:%S')}")
-        print(f"Fixed obstacles: {len(self.obstacles)}")
+        print(f"Fixed obstacle points: {len(self.obstacles)}")
+        print(
+            "Wall obstacle strip: "
+            f"depth={self.wall_obstacle_depth:.2f} m, "
+            f"robot-center exclusion={self.wall_obstacle_depth + self.footprint_clearance:.2f} m"
+        )
+        print(
+            "Approach: "
+            f"distance={self.approach_distance:.2f} m, "
+            f"final corridor={self.min_final_corridor_length:.2f}.."
+            f"{self.final_corridor_length:.2f} m"
+        )
         print(f"Target positions: {self.targets_real}")
 
         graph = self._build_graph()
         print(f"Graph: {graph.number_of_nodes()} nodes, {graph.number_of_edges()} edges")
 
         result: PathMap = {}
-        target_nodes = [self.real_to_grid(p) for p in self.targets_real]
+        for target_index, goal_real in enumerate(self.targets_real):
+            requested_target = self.real_to_grid(goal_real)
+            approach = self._build_target_approach(graph, goal_real)
 
-        for target_index, requested_target in enumerate(target_nodes):
-            target = self._nearest_reachable(graph, requested_target)
-            if target is None:
-                raise RuntimeError(f"No reachable node for target {requested_target}")
-
-            paths_from_target = nx.single_source_dijkstra_path(graph, target, weight="weight")
-            starts = list(paths_from_target.keys())
+            paths_from_anchor = nx.single_source_dijkstra_path(
+                graph,
+                approach.anchor_node,
+                weight="weight",
+            )
+            starts = list(paths_from_anchor.keys())
             if self.limit_start_nodes is not None:
                 starts = starts[: self.limit_start_nodes]
 
-            target_key = f"{target[0]},{target[1]}"
+            # The database key remains the physical goal grid node because
+            # Path_manager performs an exact lookup from target_positions. Paths
+            # intentionally terminate at approach_node instead of the occupied goal.
+            target_key = f"{requested_target[0]},{requested_target[1]}"
+            if target_key in result:
+                raise RuntimeError(
+                    f"Multiple goals quantize to the same target key {target_key}"
+                )
+
             start_map: Dict[str, List[GridNode]] = {}
             farthest_sample: Optional[List[GridNode]] = None
             farthest_length = -1
+            corridor_tail = list(approach.corridor_nodes[1:])
 
             for start in starts:
-                raw_path = list(reversed(paths_from_target[start]))
-                # Keep every 0.25 m graph node. The discrete controller needs
-                # dense waypoints; direction-only simplification makes it cut
-                # corners near walls and obstacles.
+                base_path = list(reversed(paths_from_anchor[start]))
+                raw_path = base_path + corridor_tail
                 start_map[f"{start[0]},{start[1]}"] = raw_path
                 if len(raw_path) > farthest_length:
                     farthest_length = len(raw_path)
                     farthest_sample = raw_path
 
             result[target_key] = start_map
+            approach_real = self.grid_to_real(approach.approach_node)
+            anchor_real = self.grid_to_real(approach.anchor_node)
             print(
-                f"Target {target_index + 1}/{len(target_nodes)} {target_key}: "
+                f"Target {target_index + 1}/{len(self.targets_real)} "
+                f"goal={target_key}, anchor={anchor_real}, "
+                f"approach={approach_real}, "
+                f"distance={approach.approach_distance_used:.2f} m: "
                 f"{len(start_map)} start nodes"
             )
 
             if save_graph_images:
-                self._save_debug_graph(graph, target, farthest_sample, target_index)
+                self._save_debug_graph(
+                    graph,
+                    approach,
+                    farthest_sample,
+                    target_index,
+                )
 
         self.all_paths = result
         with self.paths_file.open("w", encoding="utf-8") as f:
@@ -566,12 +883,53 @@ def main() -> None:
         help="Extra planning clearance for discrete path tracking",
     )
     parser.add_argument(
+        "--obstacle-center-clearance",
+        type=float,
+        default=0.8,
+        help="Minimum center-to-center distance between robot and fixed obstacle",
+    )
+    parser.add_argument(
+        "--wall-obstacle-depth",
+        type=float,
+        default=1.5,
+        help="Depth occupied by wall-side obstacles, measured inward from each wall",
+    )
+    parser.add_argument(
+        "--approach-distance",
+        type=float,
+        default=1.31,
+        help="Robot-center stopping distance from the physical goal",
+    )
+    parser.add_argument(
+        "--final-corridor-length",
+        type=float,
+        default=1.5,
+        help="Preferred straight final approach length from the room-center side",
+    )
+    parser.add_argument(
+        "--min-final-corridor-length",
+        type=float,
+        default=0.5,
+        help="Shortest acceptable straight final approach when an obstacle is nearby",
+    )
+    parser.add_argument(
         "--passage-center",
         type=float,
         default=None,
         help="Override room_layout.passage_center",
     )
-    parser.add_argument("--passage-width", type=float, default=1.0)
+    parser.add_argument(
+        "--passage-width",
+        type=float,
+        default=None,
+        help="Override fixed 1.2 m passage width",
+    )
+    parser.add_argument(
+        "--navigation-outer-limit",
+        type=float,
+        default=9.5,
+        help="Maximum absolute x/y coordinate allowed by runtime navigation geometry",
+    )
     parser.add_argument("--no-images", action="store_true")
     args = parser.parse_args()
 
@@ -582,8 +940,14 @@ def main() -> None:
         robot_radius=args.robot_radius,
         collision_margin=args.collision_margin,
         tracking_margin=args.tracking_margin,
+        obstacle_center_clearance=args.obstacle_center_clearance,
+        wall_obstacle_depth=args.wall_obstacle_depth,
+        approach_distance=args.approach_distance,
+        final_corridor_length=args.final_corridor_length,
+        min_final_corridor_length=args.min_final_corridor_length,
         passage_center=args.passage_center,
         passage_width=args.passage_width,
+        navigation_outer_limit=args.navigation_outer_limit,
         save_dir=args.save_dir,
     )
     generator.generate(save_graph_images=not args.no_images)
