@@ -765,6 +765,7 @@ class BlockLayoutSampler:
         block_cfg: dict,
         object_pool: dict[str, list[int]],
         place_goal: bool,
+        allow_movable_obstacles: bool,
     ) -> int | None:
         # Priority: goal/provider -> obstacles -> staff.
         used_cells_by_grid: dict[str, set[int]] = {}
@@ -821,6 +822,19 @@ class BlockLayoutSampler:
                 )
 
         for obstacle_cfg in block_cfg.get('obstacles', []):
+            obstacle_name = obstacle_cfg['object']
+            obstacle_types = self.m.object_map[obstacle_name]['types']
+
+            # Movable obstacles remain inactive at their default graveyard
+            # positions during the first N episodes of this specific env.
+            # The per-env episode counter is advanced only when that env resets,
+            # so asynchronously finishing vectorized scenes warm up independently.
+            if (
+                not allow_movable_obstacles
+                and 'movable_obstacle' in obstacle_types
+            ):
+                continue
+
             min_count = int(obstacle_cfg.get('min_count', 0))
             max_count = int(obstacle_cfg.get('max_count', min_count))
             count = int(torch.randint(
@@ -831,7 +845,7 @@ class BlockLayoutSampler:
             ).item())
             obstacle_indices = self._take(
                 object_pool,
-                obstacle_cfg['object'],
+                obstacle_name,
                 count,
                 context + '.obstacles',
             )
@@ -921,6 +935,10 @@ class BlockLayoutSampler:
                     block_cfg=self.blocks[block_name],
                     object_pool=object_pool,
                     place_goal=place_goal,
+                    allow_movable_obstacles=(
+                        int(self.m.scene_episode_counts[env_id].item())
+                        >= self.m.movable_obstacle_warmup_episodes
+                    ),
                 )
                 if goal_idx is not None:
                     candidate_goal_indices.append(goal_idx)
@@ -932,11 +950,49 @@ class BlockLayoutSampler:
                     f"No navigation goal was placed in env {env_id}"
                 )
 
+        # Hard safety invariant: during warm-up no movable obstacle may be
+        # active, regardless of how a future layout rule references it.
+        warmup_mask = (
+            self.m.scene_episode_counts[env_ids]
+            < self.m.movable_obstacle_warmup_episodes
+        )
+        movable_indices = self.m.type_map.get(
+            'movable_obstacle',
+            torch.empty(0, dtype=torch.long, device=self.m.device),
+        )
+        if warmup_mask.any() and movable_indices.numel() > 0:
+            warmup_env_ids = env_ids[warmup_mask]
+            self.m.active[warmup_env_ids[:, None], movable_indices[None, :]] = False
+            self.m.positions[
+                warmup_env_ids[:, None], movable_indices[None, :]
+            ] = self.m.default_positions[
+                warmup_env_ids[:, None], movable_indices[None, :]
+            ]
+            self.m.orientations[
+                warmup_env_ids[:, None], movable_indices[None, :]
+            ] = self.m.default_orientations[
+                warmup_env_ids[:, None], movable_indices[None, :]
+            ]
+            self.m.object_room_ids[
+                warmup_env_ids[:, None], movable_indices[None, :]
+            ] = -1
+            self.m.on_surface_idx[
+                warmup_env_ids[:, None], movable_indices[None, :]
+            ] = -1
+            self.m.surface_level[
+                warmup_env_ids[:, None], movable_indices[None, :]
+            ] = 0
+
         self.m.update_object_orientations(env_ids)
         self.m.chose_active_goal_state(
             env_ids,
             selected_goal_indices=selected_goal_indices,
         )
+
+        # Increment only the environments that actually completed this reset.
+        # Counts start at zero: calls 0 and 1 are warm-up; call 2 places movable
+        # obstacles normally.
+        self.m.scene_episode_counts[env_ids] += 1
         self.m.graph.refresh()
 
 
@@ -1064,6 +1120,23 @@ class SceneManager:
         )
         self.active_goal_room_ids = torch.full(
             (self.num_envs,), -1, dtype=torch.long, device=self.device
+        )
+
+        # Per-environment warm-up. Vectorized environments reset
+        # asynchronously, therefore a single global episode counter would be
+        # incorrect. Each env keeps movable obstacles on its own graveyard for
+        # its first two layout/reset calls.
+        self.movable_obstacle_warmup_episodes = int(
+            layout_rules.get('movable_obstacle_warmup_episodes', 2)
+        )
+        if self.movable_obstacle_warmup_episodes < 0:
+            raise ValueError(
+                'movable_obstacle_warmup_episodes must be non-negative'
+            )
+        self.scene_episode_counts = torch.zeros(
+            self.num_envs,
+            dtype=torch.long,
+            device=self.device,
         )
         if 'robot' in self.object_map:
             self.robot_global_index = int(
@@ -1593,6 +1666,56 @@ class SceneManager:
         ) * 2.0 - 1.0) * half
         return centers + offsets
 
+    def place_robot_for_goal_stage_5(
+        self,
+        config,
+        env_ids: torch.Tensor,
+        mean_dist: float,
+        min_dist: float,
+        max_dist: float,
+        angle_error: float,
+    ):
+        """
+        Stage 5:
+        - робот появляется точно в центре комнаты №1;
+        - нумерация комнат для пользователя начинается с 1, поэтому
+          внутри используется ``room_id = 0``;
+        - начальная ориентация выбирается случайно из диапазона [-pi, pi].
+
+        Параметры дистанции и ошибки угла сохраняются в сигнатуре для
+        совместимости с общим механизмом вызова stage, но здесь не используются.
+        """
+        env_ids = torch.as_tensor(
+            env_ids,
+            device=self.device,
+            dtype=torch.long,
+        )
+        num_envs = env_ids.numel()
+
+        room_id = 0
+        if self.num_rooms <= room_id:
+            raise RuntimeError(
+                "Stage 5 requires room 1, but the room layout contains "
+                f"only {self.num_rooms} rooms"
+            )
+
+        # RoomCoordinateMapper stores room centers in the common env-local frame.
+        room_center_xy = self.room_mapper.centers[room_id, :2]
+        final_robot_positions = room_center_xy.unsqueeze(0).expand(
+            num_envs, -1
+        ).clone()
+
+        final_yaw = (
+            torch.rand(num_envs, device=self.device) * 2.0 * torch.pi
+        ) - torch.pi
+        robot_quats = torch.zeros(num_envs, 4, device=self.device)
+        robot_quats[:, 0] = torch.cos(final_yaw / 2.0)
+        robot_quats[:, 3] = torch.sin(final_yaw / 2.0)
+
+        # Центр комнаты может быть занят объектом текущей раскладки.
+        self.remove_colliding_obstacles(env_ids, final_robot_positions)
+        return final_robot_positions, robot_quats
+
     def place_robot_for_goal_stage_4(
         self,
         config,
@@ -1778,48 +1901,55 @@ class SceneManager:
         self.remove_colliding_obstacles(env_ids, final_robot_positions)
         return final_robot_positions, robot_quats
 
-    def remove_colliding_obstacles(self, env_ids: torch.Tensor, robot_positions: torch.Tensor):
-        """
-        Удаляет colliding active объекты (все типы) с роботом.
-        - Проверяет dist < (robot_radius + obj_r + 0.2) для всех active obj.
-        - Деактивирует и перемещает в default_pos.
-        """
-        obs_indices = torch.arange(self.num_total_objects, device=self.device)  # ВСЕ индексы (не только movable)
-        if len(obs_indices) == 0:
+    def remove_colliding_obstacles(
+        self,
+        env_ids: torch.Tensor,
+        robot_positions: torch.Tensor,
+    ):
+        """Move active objects intersecting the robot back to the graveyard."""
+        env_ids = torch.as_tensor(
+            env_ids,
+            device=self.device,
+            dtype=torch.long,
+        )
+        if env_ids.numel() == 0 or self.num_total_objects == 0:
             return
-        E = len(env_ids)
-        obs_pos = self.positions[env_ids][:, obs_indices, :2]  # [E, M, 2]
-        obs_r = self.radii.expand(E, -1)[:, obs_indices]       # [E, M]
-        active_obs_mask = self.active[env_ids][:, obs_indices] # [E, M] — только active
 
-        # Маскируем неактивные: их pos/r игнорируем (inf dist)
-        obs_pos = torch.where(active_obs_mask.unsqueeze(-1), obs_pos, 
-                            torch.full_like(obs_pos, 999.0))
-        obs_r = torch.where(active_obs_mask, obs_r, 
-                            torch.full_like(obs_r, 999.0))
+        obs_indices = torch.arange(
+            self.num_total_objects,
+            device=self.device,
+        )
+        num_envs = env_ids.numel()
 
-        dists = torch.norm(obs_pos - robot_positions[:, None, :2], dim=2)  # [E, M]
-        coll_mask = dists < (self.robot_radius + 0.4 + 0.2)  # [E, M]
-            
-        if coll_mask.any():
-            # print("robot pos: ", robot_positions[:, None, :2])
-            # print("collisiona mask: ", coll_mask)
-            # Деактивируем colliding
-            batch_idx, obs_idx = torch.where(coll_mask)
-            # print("obs_idx :", obs_idx)
-            env_batch_idx = env_ids[batch_idx]
-            obs_indices_sel = obs_indices[obs_idx]
-            
-            self.active[env_batch_idx, obs_indices_sel] = False
-            # Перемещаем в default
-            default_pos = self.default_positions[env_batch_idx, obs_indices_sel]
-            self.positions[env_batch_idx, obs_indices_sel] = default_pos
-            self.orientations[env_batch_idx, obs_indices_sel] = (
-                self.default_orientations[env_batch_idx, obs_indices_sel]
-            )
-            
-            # Лог (опционально, для дебага)
-            # print(f"[COLL DEBUG] Deactivated {coll_mask.sum().item()} obstacles in envs {env_ids.tolist()}")
+        obs_pos = self.positions[env_ids][:, obs_indices, :2]
+        obs_r = self.radii.expand(num_envs, -1)[:, obs_indices]
+        active_obs_mask = self.active[env_ids][:, obs_indices]
+
+        dists = torch.linalg.norm(
+            obs_pos - robot_positions[:, None, :2],
+            dim=-1,
+        )
+        collision_distance = self.robot_radius + obs_r + 0.2
+        coll_mask = active_obs_mask & (dists < collision_distance)
+
+        if not coll_mask.any():
+            return
+
+        batch_idx, obs_idx = torch.where(coll_mask)
+        env_batch_idx = env_ids[batch_idx]
+        obs_indices_sel = obs_indices[obs_idx]
+
+        self.active[env_batch_idx, obs_indices_sel] = False
+        self.positions[env_batch_idx, obs_indices_sel] = (
+            self.default_positions[env_batch_idx, obs_indices_sel]
+        )
+        self.orientations[env_batch_idx, obs_indices_sel] = (
+            self.default_orientations[env_batch_idx, obs_indices_sel]
+        )
+        self.object_room_ids[env_batch_idx, obs_indices_sel] = -1
+        self.on_surface_idx[env_batch_idx, obs_indices_sel] = -1
+        self.surface_level[env_batch_idx, obs_indices_sel] = 0
+        self.graph.refresh()
 
     # ----------- Делегаты в SceneGraph -----------
     def get_graph_obs(self, env_ids: Optional[torch.Tensor] = None) -> Dict[str, torch.Tensor]:

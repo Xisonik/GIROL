@@ -279,7 +279,7 @@ class BaseWheeledRobotEnv(DirectRLEnv):
         self.stage = 0
         self.use_staff = self._default_use_staff()
         self.use_obstacles = self._default_use_obstacles()
-        self.use_controller = False #kwargs.get('expert', False)
+        self.use_controller = True #kwargs.get('expert', False)
         self.imitation = False #kwargs.get('imitation', False)
         self.cur_angle_error = 0
         self.mean_radius = 0
@@ -388,8 +388,7 @@ class BaseWheeledRobotEnv(DirectRLEnv):
             variance=runtime_cfg.get("relative_yaw_noise_variance", 0.0),
             enabled=runtime_cfg.get("relative_yaw_noise", False),
         )
-
-        self.TURN_TASK = True #TODO: bool(runtime_cfg.get("turn_task", True))
+        self.TURN_TASK = False #TODO: bool(runtime_cfg.get("turn_task", True))
         if self.TURN_TASK:
             self.stage = 4 #TODO: 4
             self.CL_ON = False
@@ -796,8 +795,7 @@ class BaseWheeledRobotEnv(DirectRLEnv):
                 actions.copy_(self._actions.clamp(-1.0, 1.0))
         else:
             linear_speed = torch.zeros_like(self._actions[:, 0])
-            angular_speed = torch.zeros_like(self._actions[:, 1]) #2.0 * self._actions[:, 1]  # TODO: re
-            print("zeros _ angh", angular_speed)
+            angular_speed = 2.0 * self._actions[:, 1] 
             if self.DEF_TURN:
                 angular_speed = torch.full_like(angular_speed, -2.0)
 

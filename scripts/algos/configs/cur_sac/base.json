@@ -4,8 +4,8 @@
     "algo": "sac",
     "task_name": "Aloha_nav",
     "seed": 42,
-    "num_envs": 3,
-    "timesteps": 100000,
+    "num_envs": 32,
+    "timesteps": 800000,
     "headless": true,
     "video": false,
     "eval": false,
@@ -34,8 +34,8 @@
       "enabled": false
     },
     "features": {
-      "gt_orientation_step_end": 4000,
-      "noise_orientation_steps_start_step": 150000,
+      "gt_orientation_step_end": 400000,
+      "noise_orientation_steps_start_step": 400000,
       "use_img": true,
       "use_memory": false,
       "use_goal": true,

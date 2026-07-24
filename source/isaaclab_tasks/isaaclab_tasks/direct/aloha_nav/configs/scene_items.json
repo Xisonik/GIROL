@@ -483,6 +483,50 @@
       }
     },
     {
+      "_comment1": "Error: False",
+      "name": "ladder",
+      "info": {
+        "color": "yellow",
+        "add_info": [],
+        "position": [],
+        "semantic_name": "ladder",
+        "clip_prompts": [
+          "a photo of a ladder",
+          "an indoor step ladder"
+        ]
+      },
+      "type": [
+        "staff_obstacle"
+      ],
+      "count": 1,
+      "size": [
+        0.4,
+        0.4,
+        0.9
+      ],
+      "usd_paths": [
+        "scenes/obstacles/ladder.usd"
+      ],
+      "id": 12,
+      "transform": {
+        "rotation_deg": [
+          0.0,
+          0.0,
+          90.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "offset": [
+          0.0,
+          0.0,
+          0.5
+        ]
+      }
+    },
+    {
       "_comment1": "Error: True",
       "name": "lamp",
       "info": {
@@ -655,6 +699,264 @@
           0.0,
           0.0,
           0.0
+        ]
+      }
+    },
+    {
+      "name": "dushevaia",
+      "info": {
+        "semantic_name": "shower enclosure",
+        "color": "white",
+        "add_info": [],
+        "position": [],
+        "clip_prompts": [
+          "a photo of a shower enclosure",
+          "an indoor shower cabin"
+        ]
+      },
+      "type": [
+        "staff_obstacle"
+      ],
+      "count": 1,
+      "size": [
+        0.4,
+        0.4,
+        0.9
+      ],
+      "usd_paths": [
+        "scenes/scenes_sber_kitchen_for_BBQ/3room/dushevaia/dushevaia.usd"
+      ],
+      "id": 17,
+      "transform": {
+        "rotation_deg": [
+          90.0,
+          0.0,
+          90.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "offset": [
+          0.0,
+          0.0,
+          1.5
+        ]
+      }
+    },
+    {
+      "name": "holodilnik",
+      "info": {
+        "semantic_name": "refrigerator",
+        "color": "white",
+        "add_info": [],
+        "position": [],
+        "clip_prompts": [
+          "a photo of a refrigerator",
+          "a kitchen fridge"
+        ]
+      },
+      "type": [
+        "staff_obstacle"
+      ],
+      "count": 1,
+      "size": [
+        0.4,
+        0.4,
+        0.9
+      ],
+      "usd_paths": [
+        "scenes/scenes_sber_kitchen_for_BBQ/3room/holodilnik/holodilnik.usd"
+      ],
+      "id": 18,
+      "transform": {
+        "rotation_deg": [
+          90.0,
+          0.0,
+          90.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "offset": [
+          0.0,
+          0.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "name": "plita",
+      "info": {
+        "semantic_name": "kitchen stove",
+        "color": "black",
+        "add_info": [],
+        "position": [],
+        "clip_prompts": [
+          "a photo of a kitchen stove",
+          "an indoor cooking stove"
+        ]
+      },
+      "type": [
+        "staff_obstacle"
+      ],
+      "count": 1,
+      "size": [
+        0.4,
+        0.4,
+        0.9
+      ],
+      "usd_paths": [
+        "scenes/scenes_sber_kitchen_for_BBQ/3room/plita/plita.usd"
+      ],
+      "id": 19,
+      "transform": {
+        "rotation_deg": [
+          90.0,
+          0.0,
+          90.0
+        ],
+        "scale": [
+          0.6,
+          0.6,
+          0.6
+        ],
+        "offset": [
+          0.0,
+          0.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "name": "stiralka",
+      "info": {
+        "semantic_name": "washing machine",
+        "color": "white",
+        "add_info": [],
+        "position": [],
+        "clip_prompts": [
+          "a photo of a washing machine",
+          "a front-loading washing machine"
+        ]
+      },
+      "type": [
+        "staff_obstacle"
+      ],
+      "count": 1,
+      "size": [
+        0.4,
+        0.4,
+        0.9
+      ],
+      "usd_paths": [
+        "scenes/scenes_sber_kitchen_for_BBQ/3room/stiralka/stiralka.usd"
+      ],
+      "id": 20,
+      "transform": {
+        "rotation_deg": [
+          90.0,
+          0.0,
+          90.0
+        ],
+        "scale": [
+          0.6,
+          0.6,
+          0.6
+        ],
+        "offset": [
+          0.0,
+          0.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "name": "vanna_korzina",
+      "info": {
+        "semantic_name": "laundry basket",
+        "color": "gray",
+        "add_info": [],
+        "position": [],
+        "clip_prompts": [
+          "a photo of a laundry basket",
+          "an indoor clothes basket"
+        ]
+      },
+      "type": [
+        "movable_obstacle"
+      ],
+      "count": 1,
+      "size": [
+        0.4,
+        0.4,
+        0.9
+      ],
+      "usd_paths": [
+        "scenes/scenes_sber_kitchen_for_BBQ/3room/vanna_korzina/vanna_korzina.usd"
+      ],
+      "id": 21,
+      "transform": {
+        "rotation_deg": [
+          90.0,
+          0.0,
+          90.0
+        ],
+        "scale": [
+          0.6,
+          0.6,
+          0.6
+        ],
+        "offset": [
+          0.0,
+          0.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "name": "ventolator",
+      "info": {
+        "semantic_name": "electric fan",
+        "color": "gray",
+        "add_info": [],
+        "position": [],
+        "clip_prompts": [
+          "a photo of an electric fan",
+          "an indoor household fan"
+        ]
+      },
+      "type": [
+        "staff_obstacle"
+      ],
+      "count": 1,
+      "size": [
+        0.4,
+        0.4,
+        0.9
+      ],
+      "usd_paths": [
+        "scenes/scenes_sber_kitchen_for_BBQ/3room/ventolator/ventolator.usd"
+      ],
+      "id": 22,
+      "transform": {
+        "rotation_deg": [
+          90.0,
+          0.0,
+          90.0
+        ],
+        "scale": [
+          0.6,
+          0.6,
+          0.6
+        ],
+        "offset": [
+          0.0,
+          0.0,
+          1.0
         ]
       }
     }

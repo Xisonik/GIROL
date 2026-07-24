@@ -142,17 +142,17 @@ class BaseWheeledRobotEnvCfg(DirectRLEnvCfg):
         height=224,
     )
     current_dir = os.getcwd()
-    room = sim_utils.UsdFileCfg(
-        usd_path=os.path.join(current_dir, "source/isaaclab_assets/data/aloha_assets", "scenes/scenes_sber_kitchen_for_BBQ/room_big_wall.usd"),
-        rigid_props=sim_utils.RigidBodyPropertiesCfg(
-            disable_gravity=False,
-            kinematic_enabled=False,
-            rigid_body_enabled=False,
-        ),
-        collision_props=sim_utils.CollisionPropertiesCfg(
-            collision_enabled=True,
-        ),
-    )
+    # room = sim_utils.UsdFileCfg(
+    #     usd_path=os.path.join(current_dir, "source/isaaclab_assets/data/aloha_assets", "scenes/scenes_sber_kitchen_for_BBQ/room_big_wall.usd"),
+    #     rigid_props=sim_utils.RigidBodyPropertiesCfg(
+    #         disable_gravity=False,
+    #         kinematic_enabled=False,
+    #         rigid_body_enabled=False,
+    #     ),
+    #     collision_props=sim_utils.CollisionPropertiesCfg(
+    #         collision_enabled=True,
+    #     ),
+    # )
     contact_sensor = ContactSensorCfg(
         prim_path="/World/envs/env_.*/Robot/.*",
         update_period=0.1,
@@ -574,12 +574,12 @@ class BaseWheeledRobotEnv(DirectRLEnv):
         stage = get_context().get_stage()
         UsdGeom.Xform.Define(stage, "/World/envs/env_0/obstacles")
 
-        spawn_from_usd(
-            prim_path="/World/envs/env_0/obstacles/room",
-            cfg=self.cfg.room,
-            translation=(0.0, 0.0, 0.0),
-            orientation=(0.0, 0.0, 0.0, 1.0),
-        )
+        # spawn_from_usd(
+        #     prim_path="/World/envs/env_0/obstacles/room",
+        #     cfg=self.cfg.room,
+        #     translation=(0.0, 0.0, 0.0),
+        #     orientation=(0.0, 0.0, 0.0, 1.0),
+        # )
 
         self.asset_manager = AssetManager(config_path=self.config_path)
         prim_paths_env0, counts = self.asset_manager.spawn_assets_in_env0()
