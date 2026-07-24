@@ -275,8 +275,8 @@ class BaseWheeledRobotEnv(DirectRLEnv):
         self.random_actions = False
         self.scene_manager = SceneManager(self.num_envs, self.config_path, self.device)
 
-        self.CL_ON = True #CL_ON #TODO: TOE
-        self.stage = 2
+        self.CL_ON = CL_ON 
+        self.stage = 0
         self.use_staff = self._default_use_staff()
         self.use_obstacles = self._default_use_obstacles()
         self.use_controller = True #kwargs.get('expert', False)
