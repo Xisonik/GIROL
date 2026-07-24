@@ -1258,6 +1258,13 @@ class GraphEncoder(nn.Module):
         scene_ids: Optional[torch.Tensor] = None,
         topology_cache_key: Optional[Hashable] = None,
     ) -> torch.Tensor:
+        # Debug dump of the raw scene-graph observation (same tensor for every
+        # encoder). Enable with GIROL_DUMP_GRAPH=1; decode with inspect_graph.py.
+        if os.environ.get("GIROL_DUMP_GRAPH") == "1" and not getattr(self, "_dump_done", False):
+            self._dump_done = True
+            os.makedirs("logs", exist_ok=True)
+            torch.save(graph_flat.detach().cpu(), "logs/scene_dump.pt")
+            print(f"[dump] saved graph_flat {tuple(graph_flat.shape)} -> logs/scene_dump.pt", flush=True)
         return self.encode_graph(
             graph_flat,
             scene_ids=scene_ids,
