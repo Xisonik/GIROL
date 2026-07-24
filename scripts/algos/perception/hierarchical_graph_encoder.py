@@ -56,6 +56,8 @@ class HierarchicalGraphEncoder(nn.Module):
         heads: int = 4,
         align_threshold: float = 0.4,
         print_graph_config: bool = False,
+        rooms_from_layout: bool = False,
+        layout_rules_path: Optional[str] = None,
         **kwargs,                    # tolerate/ignore perception-specific kwargs (graphs_dir, edge_mode, ...)
     ):
         super().__init__()
@@ -103,21 +105,41 @@ class HierarchicalGraphEncoder(nn.Module):
             nn.Linear(hidden_dim * 3, 256), nn.ReLU(inplace=True),
             nn.Dropout(dropout), nn.Linear(256, out_dim))
 
+        # ---- room geometry --------------------------------------------------
+        # Default: 4 fixed quadrants (room = (x<0)+2*(y<0)).
+        # rooms_from_layout=True: read the sim's own layout_rules.json and build
+        # exactly len(active_rooms) room-nodes, so the graph's room count matches
+        # the scene (1 room -> 1 node, 2 -> 2, 4 -> 4). Each room is described by
+        # its 2D center; objects are assigned to the nearest active room center.
+        self.rooms_from_layout = bool(rooms_from_layout)
+        self._active_room_ids = None
+        if self.rooms_from_layout:
+            centers2d, self._active_room_ids = self._load_layout_rooms(layout_rules_path)
+            self.R = int(centers2d.shape[0])
+            self.register_buffer("room_centers", centers2d, persistent=False)  # [R, 2]
+        else:
+            self.R = int(num_rooms)
+            xs = torch.tensor([1.0 if (r % 2 == 0) else -1.0 for r in range(self.R)])
+            ys = torch.tensor([1.0 if (r // 2 == 0) else -1.0 for r in range(self.R)])
+            centers2d = torch.stack([xs, ys], dim=-1)
+            self.register_buffer("room_centers", None, persistent=False)
         R = self.R
-        x_right = torch.tensor([1 if (r % 2 == 0) else 0 for r in range(R)])
-        y_front = torch.tensor([1 if (r // 2 == 0) else 0 for r in range(R)])
+
+        # zone one-hots + room<->room edge directions derived from room centers'
+        # signs (works for both quadrant centers and real layout centers).
+        x_right = (centers2d[:, 0] > 0).long()
+        y_front = (centers2d[:, 1] > 0).long()
         self.register_buffer("x_zone_onehot", torch.stack([x_right, 1 - x_right], -1).float(), persistent=False)
         self.register_buffer("y_zone_onehot", torch.stack([y_front, 1 - y_front], -1).float(), persistent=False)
 
         ri, rj, xdir, ydir = [], [], [], []
-        xpos = lambda r: 1.0 if (r % 2 == 0) else -1.0
-        ypos = lambda r: 1.0 if (r // 2 == 0) else -1.0
         for i in range(R):
             for j in range(R):
                 if i == j:
                     continue
                 ri.append(i); rj.append(j)
-                dx, dy = xpos(j) - xpos(i), ypos(j) - ypos(i)
+                dx = float(centers2d[j, 0] - centers2d[i, 0])
+                dy = float(centers2d[j, 1] - centers2d[i, 1])
                 xdir.append(DIR_POS if dx > 0 else (DIR_NEG if dx < 0 else DIR_ALIGNED))
                 ydir.append(DIR_POS if dy > 0 else (DIR_NEG if dy < 0 else DIR_ALIGNED))
         self.register_buffer("rr_ri", torch.tensor(ri, dtype=torch.long), persistent=False)
@@ -126,9 +148,32 @@ class HierarchicalGraphEncoder(nn.Module):
         self.register_buffer("rr_ydir", torch.tensor(ydir, dtype=torch.long), persistent=False)
 
         if print_graph_config:
-            print(f"[HierarchicalGraphEncoder] rooms={R} metric={self.use_metric} "
+            src = f"layout(active_rooms={self._active_room_ids})" if self.rooms_from_layout else "quadrant(fixed 4)"
+            print(f"[HierarchicalGraphEncoder] rooms={R} room_source={src} metric={self.use_metric} "
                   f"layers={num_layers} hidden={hidden_dim} out={out_dim} "
                   f"edges=goal_star+containment+room_room+self  edge_feats=direction_only(no distance)")
+
+    @staticmethod
+    def _load_layout_rooms(path: Optional[str]):
+        """Read active room ids + centers from the sim's layout_rules.json.
+
+        Returns (centers2d [R,2] float tensor, active_room_ids list).
+        """
+        import json
+        if path is None:
+            path = os.path.join(
+                os.getcwd(),
+                "source/isaaclab_tasks/isaaclab_tasks/direct/aloha_nav/configs/layout_rules.json",
+            )
+        with open(path) as fh:
+            layout = json.load(fh)["room_layout"]
+        active = list(layout["active_rooms"])                 # e.g. [1, 2]
+        centers = layout["room_centers"]                       # rooms 1..N, each [x, y, z]
+        centers2d = torch.tensor(
+            [[float(centers[r - 1][0]), float(centers[r - 1][1])] for r in active],
+            dtype=torch.float32,
+        )
+        return centers2d, active
 
     def _dir(self, delta):
         ids = torch.full(delta.shape, DIR_ALIGNED, dtype=torch.long, device=delta.device)
@@ -159,7 +204,12 @@ class HierarchicalGraphEncoder(nn.Module):
         pos, xy = g[..., 3:6], g[..., 3:5]
 
         goal_idx = is_goal.argmax(dim=1)
-        room_id = (xy[..., 0] < 0).long() + 2 * (xy[..., 1] < 0).long()
+        if self.rooms_from_layout:
+            # nearest active room center -> faithful sim room id in [0, R)
+            dist = (xy.unsqueeze(2) - self.room_centers.view(1, 1, self.R, 2)).pow(2).sum(-1)  # [B,M,R]
+            room_id = dist.argmin(dim=-1)
+        else:
+            room_id = (xy[..., 0] < 0).long() + 2 * (xy[..., 1] < 0).long()
         goal_room = room_id[ar, goal_idx]
 
         name_feat = self.name_proj(self.id_to_name_emb[object_id])
@@ -209,12 +259,13 @@ class HierarchicalGraphEncoder(nn.Module):
         fld_l.append(f)
 
         P = self.rr_ri.shape[0]
-        src_l.append((off + M + self.rr_ri.view(1, P)).reshape(-1))
-        dst_l.append((off + M + self.rr_rj.view(1, P)).reshape(-1))
-        xrr = self.rr_xdir.view(1, P).expand(B, P).reshape(-1)
-        yrr = self.rr_ydir.view(1, P).expand(B, P).reshape(-1)
-        fld_l.append(torch.stack([torch.full_like(xrr, REL_ROOM_ROOM), xrr, yrr,
-                                  torch.full_like(xrr, ROOMREL_DIFF)], -1))
+        if P > 0:  # a single-room scene (R=1) has no room<->room edges
+            src_l.append((off + M + self.rr_ri.view(1, P)).reshape(-1))
+            dst_l.append((off + M + self.rr_rj.view(1, P)).reshape(-1))
+            xrr = self.rr_xdir.view(1, P).expand(B, P).reshape(-1)
+            yrr = self.rr_ydir.view(1, P).expand(B, P).reshape(-1)
+            fld_l.append(torch.stack([torch.full_like(xrr, REL_ROOM_ROOM), xrr, yrr,
+                                      torch.full_like(xrr, ROOMREL_DIFF)], -1))
 
         edge_index = torch.stack([torch.cat(src_l), torch.cat(dst_l)], dim=0)
         edge_attr = self._edge_encoder(torch.cat(fld_l, dim=0))
