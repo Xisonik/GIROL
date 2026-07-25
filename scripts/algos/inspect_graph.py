@@ -169,6 +169,80 @@ def plot(info, names, e, out, rooms):
     print(f"[plot] {out}")
 
 
+def plot_layered(info, names, e, out, rooms):
+    """Node-link view of the hierarchical graph in layers:
+    top row = room nodes, bottom = object nodes (grouped under their room),
+    edges = goal-star (goal<->object) + containment (object<->room) + room<->room.
+    Self-loops (one per node) are omitted for readability.
+    """
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from matplotlib.lines import Line2D
+    palette = ["tab:blue", "tab:green", "tab:orange", "tab:red", "tab:purple", "tab:brown"]
+    col = lambda r: palette[int(r) % len(palette)]
+    gi, oid, room, active = info["gi"], info["oid"], info["room"], info["active"]
+    M = info["M"]
+
+    objs = [i for i in range(M) if active[i] > 0.5 or i == gi]      # active objects + goal
+    by_room = {r: [i for i in objs if int(room[i]) == r] for r in range(rooms.R)}
+
+    Y_ROOM, Y_OBJ = 2.0, 0.0
+    room_x, obj_pos = {}, {}
+    x, gap = 0.0, 1.5
+    for r in range(rooms.R):
+        members = by_room[r]
+        xs = [x + k for k in range(max(1, len(members)))]
+        for k, i in enumerate(members):
+            obj_pos[i] = (xs[k], Y_OBJ)
+        room_x[r] = (xs[0] + xs[-1]) / 2.0
+        x = xs[-1] + 1 + gap
+    if gi in obj_pos:                         # lift the goal so its star fans out
+        obj_pos[gi] = (obj_pos[gi][0], 0.95)
+
+    fig, ax = plt.subplots(figsize=(max(12, len(objs) * 0.85), 7.5))
+
+    # edges ---------------------------------------------------------------
+    for i in objs:                                                  # containment: object -> room
+        ox, oy = obj_pos[i]
+        ax.plot([ox, room_x[int(room[i])]], [oy, Y_ROOM], color="0.7", lw=0.7, alpha=0.55, zorder=1)
+    for a in range(rooms.R):                                        # room <-> room
+        for b in range(a + 1, rooms.R):
+            ax.plot([room_x[a], room_x[b]], [Y_ROOM, Y_ROOM], color="tab:purple", lw=1.4, alpha=0.7, zorder=2)
+    gx, gy = obj_pos[gi]                                            # goal-star: goal -> every object
+    for i in objs:
+        if i == gi:
+            continue
+        ox, oy = obj_pos[i]
+        ax.plot([gx, ox], [gy, oy], color="tab:orange", lw=0.6, alpha=0.30, zorder=1)
+
+    # nodes ---------------------------------------------------------------
+    for r in range(rooms.R):
+        ax.scatter(room_x[r], Y_ROOM, s=2600, marker="s", color=col(r), edgecolors="black", lw=1.2, zorder=4)
+        ax.annotate(f"ROOM\n{rooms.label(r)}", (room_x[r], Y_ROOM), ha="center", va="center",
+                    color="white", fontsize=10, fontweight="bold", zorder=5)
+    for i in objs:
+        ox, oy = obj_pos[i]
+        if i == gi:
+            ax.scatter(ox, oy, s=520, marker="*", color="gold", edgecolors="black", lw=1.0, zorder=6)
+        else:
+            ax.scatter(ox, oy, s=180, color=col(int(room[i])), edgecolors="black", lw=0.5, zorder=4)
+        nm = names.get(int(oid[i]), f"id{int(oid[i])}")
+        ax.annotate(nm + (" ★" if i == gi else ""), (ox, oy), rotation=40, ha="right", va="top",
+                    fontsize=7, xytext=(-3, -7), textcoords="offset points", zorder=5)
+
+    ax.legend(handles=[
+        Line2D([0], [0], color="tab:orange", lw=2, label="goal-star (goal ↔ object)"),
+        Line2D([0], [0], color="0.7", lw=2, label="containment (object ↔ room)"),
+        Line2D([0], [0], color="tab:purple", lw=2, label="room ↔ room"),
+    ], loc="lower center", ncol=3, fontsize=9, frameon=False, bbox_to_anchor=(0.5, -0.08))
+    ax.set_title(f"env {e}: hierarchical graph (layered) — {rooms.R} rooms, "
+                 f"{len(objs)} object nodes   (★ = goal; self-loops omitted)")
+    ax.set_ylim(-1.0, 2.8); ax.axis("off")
+    fig.savefig(out, dpi=130, bbox_inches="tight")
+    print(f"[layered] {out}")
+
+
 def main():
     argv = sys.argv[1:]
     quadrant = "--quadrant" in argv
@@ -201,6 +275,7 @@ def main():
         print_table(info, names, e, rooms)
         print_tree(info, names, e, rooms)
         plot(info, names, e, f"logs/scene_graph_env{e}.png", rooms)
+        plot_layered(info, names, e, f"logs/scene_graph_layered_env{e}.png", rooms)
 
 
 if __name__ == "__main__":
