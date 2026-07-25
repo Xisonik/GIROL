@@ -107,7 +107,7 @@ class BaseWheeledRobotEnvCfg(DirectRLEnvCfg):
     })
     state_space = 0
     debug_vis = False
- 
+
     ui_window_class_type = WheeledRobotEnvWindow
 
     sim: SimulationCfg = SimulationCfg(
@@ -275,14 +275,14 @@ class BaseWheeledRobotEnv(DirectRLEnv):
         self.random_actions = False
         self.scene_manager = SceneManager(self.num_envs, self.config_path, self.device)
 
-        self.CL_ON = CL_ON 
+        self.CL_ON = CL_ON # TODO: TOE
         self.stage = 0
         self.use_staff = self._default_use_staff()
         self.use_obstacles = self._default_use_obstacles()
         self.use_controller = True #kwargs.get('expert', False)
         self.imitation = False #kwargs.get('imitation', False)
         self.cur_angle_error = 0
-        self.mean_radius = 0
+        self.mean_radius = 0.5
         self.warm_len = 2000
         self.my_episode_lenght = 512
 

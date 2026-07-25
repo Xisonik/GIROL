@@ -5,7 +5,7 @@
     "task_name": "Aloha_nav",
     "seed": 42,
     "num_envs": 32,
-    "timesteps": 300000,
+    "timesteps": 3000000,
     "headless": true,
     "video": false,
     "eval": false,

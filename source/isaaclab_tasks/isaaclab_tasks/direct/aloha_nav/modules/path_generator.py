@@ -18,14 +18,13 @@ PathMap = Dict[str, Dict[str, List[GridNode]]]
 
 @dataclass(frozen=True)
 class TargetApproach:
-    """Target-specific path endpoint and mandatory final approach corridor."""
+    """Target-specific pre-goal point and its graph connections."""
 
     goal_real: Point3
     room_center: Point3
-    anchor_node: GridNode
     approach_node: GridNode
     approach_distance_used: float
-    corridor_nodes: Tuple[GridNode, ...]
+    connector_nodes: Tuple[GridNode, ...]
 
 
 class FixedFourRoomPathGenerator:
@@ -38,9 +37,10 @@ class FixedFourRoomPathGenerator:
     All local obstacle cells are treated as occupied in every room, so the
     database is conservative when the runtime scene contains fewer obstacles.
     A configurable wall-side strip is excluded from the base graph. For every
-    physical goal, a target-specific straight corridor is appended so the robot
-    approaches from the room-center side. Random staff objects are intentionally
-    ignored.
+    physical goal, one pre-goal point is placed ``approach_distance`` metres from
+    the goal toward the room center. The graph leads to that point, after which
+    one direct segment is appended from the pre-goal point to the physical goal.
+    Random staff objects are intentionally ignored.
     """
 
     def __init__(
@@ -54,9 +54,8 @@ class FixedFourRoomPathGenerator:
         tracking_margin: float = 0.12,
         obstacle_center_clearance: float = 0.8,
         wall_obstacle_depth: float = 1.5,
-        approach_distance: float = 1.31,
-        final_corridor_length: float = 1.5,
-        min_final_corridor_length: float = 0.5,
+        approach_distance: float = 1.0,
+        approach_connection_radius: float = 2.0,
         passage_center: float | None = None,
         passage_width: float | None = None,
         navigation_outer_limit: float = 9.5,
@@ -74,8 +73,7 @@ class FixedFourRoomPathGenerator:
         self.obstacle_center_clearance = float(obstacle_center_clearance)
         self.wall_obstacle_depth = float(wall_obstacle_depth)
         self.approach_distance = float(approach_distance)
-        self.final_corridor_length = float(final_corridor_length)
-        self.min_final_corridor_length = float(min_final_corridor_length)
+        self.approach_connection_radius = float(approach_connection_radius)
         self.passage_center = passage_center
         self.passage_width = passage_width
         self.navigation_outer_limit = float(navigation_outer_limit)
@@ -93,12 +91,8 @@ class FixedFourRoomPathGenerator:
             raise ValueError("wall_obstacle_depth must be non-negative")
         if self.approach_distance <= 0:
             raise ValueError("approach_distance must be positive")
-        if self.min_final_corridor_length <= 0:
-            raise ValueError("min_final_corridor_length must be positive")
-        if self.final_corridor_length < self.min_final_corridor_length:
-            raise ValueError(
-                "final_corridor_length must be >= min_final_corridor_length"
-            )
+        if self.approach_connection_radius <= 0:
+            raise ValueError("approach_connection_radius must be positive")
         if self.navigation_outer_limit <= 0:
             raise ValueError("navigation_outer_limit must be positive")
 
@@ -593,55 +587,19 @@ class FixedFourRoomPathGenerator:
                 out.append(node)
         return out
 
-    def _corridor_is_valid(
+    def _build_target_approach_graph(
         self,
-        corridor: List[GridNode],
+        base_graph: nx.Graph,
         goal_real: Point3,
-    ) -> bool:
-        if not corridor:
-            return False
+    ) -> tuple[nx.Graph, TargetApproach]:
+        """Add one pre-goal node exactly on the room-center-to-goal line.
 
-        previous_goal_distance = float("inf")
-        for node in corridor:
-            x, y = self.grid_to_real(node)
-            if not self._point_is_valid_xy(
-                x,
-                y,
-                allow_wall_obstacle_strip=True,
-            ):
-                return False
-            goal_distance = math.hypot(x - goal_real[0], y - goal_real[1])
-            if goal_distance > previous_goal_distance + (1.0 / self.ratio):
-                return False
-            previous_goal_distance = goal_distance
-
-        for u, v in zip(corridor, corridor[1:]):
-            if max(abs(v[0] - u[0]), abs(v[1] - u[1])) > 1:
-                return False
-            if not self._segment_real_is_valid(
-                self.grid_to_real(u),
-                self.grid_to_real(v),
-                allow_wall_obstacle_strip=True,
-            ):
-                return False
-        return True
-
-    def _corridor_lengths(self) -> List[float]:
-        step = 1.0 / self.ratio
-        lengths: List[float] = []
-        value = self.final_corridor_length
-        while value >= self.min_final_corridor_length - 1e-9:
-            lengths.append(value)
-            value -= step
-        if not lengths or abs(lengths[-1] - self.min_final_corridor_length) > 1e-9:
-            lengths.append(self.min_final_corridor_length)
-        return lengths
-
-    def _build_target_approach(
-        self,
-        graph: nx.Graph,
-        goal_real: Point3,
-    ) -> TargetApproach:
+        The base graph is not extended toward the room center. Instead, the
+        pre-goal node is placed ``approach_distance`` metres from the physical
+        goal toward the room center and connected only to nearby base-graph
+        nodes with direct collision-free visibility. The final path segment is
+        later appended directly from this pre-goal node to the goal node.
+        """
         room_center = self._room_center_for_point(goal_real[0], goal_real[1])
         if room_center is None:
             raise RuntimeError(f"Goal {goal_real} is outside all active rooms")
@@ -654,67 +612,101 @@ class FixedFourRoomPathGenerator:
                 f"Goal {goal_real} coincides with room center; "
                 "a unique center-side approach direction does not exist"
             )
-        inward = (vx / norm, vy / norm)
 
-        grid_step = 1.0 / self.ratio
-        max_approach_extra = max(self.obstacle_center_clearance, grid_step)
-        max_anchor_extension = 0.5 * self.subroom_size
-        approach_extra = 0.0
+        inward_x = vx / norm
+        inward_y = vy / norm
+        approach_real = (
+            goal_real[0] + inward_x * self.approach_distance,
+            goal_real[1] + inward_y * self.approach_distance,
+        )
+        approach_node = self.real_to_grid(approach_real)
+        approach_xy = self.grid_to_real(approach_node)
+        goal_node = self.real_to_grid(goal_real)
+        goal_xy = self.grid_to_real(goal_node)
 
-        while approach_extra <= max_approach_extra + 1e-9:
-            approach_distance = self.approach_distance + approach_extra
-            approach_real = (
-                goal_real[0] + inward[0] * approach_distance,
-                goal_real[1] + inward[1] * approach_distance,
+        if approach_node == goal_node:
+            raise RuntimeError(
+                f"Approach point for goal {goal_real} quantizes to the goal node. "
+                f"Increase approach_distance or ratio; current values are "
+                f"{self.approach_distance:.3f} m and {self.ratio}."
             )
-            approach_node = self.real_to_grid(approach_real)
-            approach_xy = self.grid_to_real(approach_node)
-            if not self._point_is_valid_xy(
-                approach_xy[0],
-                approach_xy[1],
-                allow_wall_obstacle_strip=True,
-            ):
-                approach_extra += grid_step
+
+        if not self._point_is_valid_xy(
+            approach_xy[0],
+            approach_xy[1],
+            allow_wall_obstacle_strip=True,
+        ):
+            raise RuntimeError(
+                f"The requested approach point {approach_xy} for goal {goal_real} "
+                f"is invalid. approach_distance={self.approach_distance:.2f} m."
+            )
+
+        if not self._segment_real_is_valid(
+            approach_xy,
+            goal_xy,
+            allow_wall_obstacle_strip=True,
+        ):
+            raise RuntimeError(
+                f"Direct final segment {approach_xy} -> {goal_xy} is not "
+                f"collision-free for goal {goal_real}."
+            )
+
+        target_graph = base_graph.copy()
+        target_graph.add_node(approach_node)
+
+        radius_grid = self.approach_connection_radius * self.ratio
+        radius_grid_sq = radius_grid * radius_grid
+        connector_nodes: List[GridNode] = []
+
+        for node in base_graph.nodes:
+            dx = node[0] - approach_node[0]
+            dy = node[1] - approach_node[1]
+            distance_grid_sq = dx * dx + dy * dy
+            if distance_grid_sq <= 1e-12 or distance_grid_sq > radius_grid_sq:
                 continue
 
-            for corridor_length in self._corridor_lengths():
-                extension = 0.0
-                while extension <= max_anchor_extension + 1e-9:
-                    anchor_real = (
-                        approach_real[0]
-                        + inward[0] * (corridor_length + extension),
-                        approach_real[1]
-                        + inward[1] * (corridor_length + extension),
-                    )
-                    anchor_node = self.real_to_grid(anchor_real)
-                    if anchor_node in graph and graph.degree(anchor_node) > 0:
-                        corridor = self._grid_line(anchor_node, approach_node)
-                        if self._corridor_is_valid(corridor, goal_real):
-                            return TargetApproach(
-                                goal_real=goal_real,
-                                room_center=room_center,
-                                anchor_node=anchor_node,
-                                approach_node=approach_node,
-                                approach_distance_used=math.hypot(
-                                    approach_xy[0] - goal_real[0],
-                                    approach_xy[1] - goal_real[1],
-                                ),
-                                corridor_nodes=tuple(corridor),
-                            )
-                    extension += grid_step
-            approach_extra += grid_step
+            node_xy = self.grid_to_real(node)
+            if not self._segment_real_is_valid(
+                node_xy,
+                approach_xy,
+                allow_wall_obstacle_strip=True,
+            ):
+                continue
 
-        raise RuntimeError(
-            f"No collision-free center-side final corridor for goal {goal_real}. "
-            f"Tried approach distances {self.approach_distance:.2f}.."
-            f"{self.approach_distance + max_approach_extra:.2f} m and corridor "
-            f"lengths {self.min_final_corridor_length:.2f}.."
-            f"{self.final_corridor_length:.2f} m."
+            distance_grid = math.sqrt(distance_grid_sq)
+            target_graph.add_edge(node, approach_node, weight=distance_grid)
+            connector_nodes.append(node)
+
+        # If the approach point already belongs to the base graph, retain its
+        # normal graph neighbours in the debug information as well.
+        if approach_node in base_graph:
+            for node in base_graph.neighbors(approach_node):
+                if node not in connector_nodes:
+                    connector_nodes.append(node)
+
+        if target_graph.degree(approach_node) == 0:
+            raise RuntimeError(
+                f"No base-graph node can connect to approach point {approach_xy} "
+                f"within {self.approach_connection_radius:.2f} m for goal "
+                f"{goal_real}. Increase --approach-connection-radius or inspect "
+                "the obstacle geometry."
+            )
+
+        actual_distance = math.hypot(
+            approach_xy[0] - goal_xy[0],
+            approach_xy[1] - goal_xy[1],
+        )
+        return target_graph, TargetApproach(
+            goal_real=goal_real,
+            room_center=room_center,
+            approach_node=approach_node,
+            approach_distance_used=actual_distance,
+            connector_nodes=tuple(sorted(set(connector_nodes))),
         )
 
     def _save_debug_graph(
         self,
-        graph: nx.Graph,
+        base_graph: nx.Graph,
         approach: TargetApproach,
         sample_path: Optional[List[GridNode]],
         index: int,
@@ -725,7 +717,7 @@ class FixedFourRoomPathGenerator:
         fig, ax = plt.subplots(figsize=(9, 9), dpi=160)
         ax.set_aspect("equal")
 
-        nodes_real = [self.grid_to_real(n) for n in graph.nodes]
+        nodes_real = [self.grid_to_real(n) for n in base_graph.nodes]
         ax.scatter([p[0] for p in nodes_real], [p[1] for p in nodes_real], s=2)
 
         for ox, oy, _ in self.obstacles:
@@ -738,18 +730,33 @@ class FixedFourRoomPathGenerator:
                 )
             )
 
-        goal = approach.goal_real
-        approach_real = self.grid_to_real(approach.approach_node)
-        anchor_real = self.grid_to_real(approach.anchor_node)
-        ax.scatter([goal[0]], [goal[1]], s=65, marker="*")
-        ax.scatter([approach_real[0]], [approach_real[1]], s=38, marker="o")
-        ax.scatter([anchor_real[0]], [anchor_real[1]], s=38, marker="s")
+        goal_node = self.real_to_grid(approach.goal_real)
+        goal_xy = self.grid_to_real(goal_node)
+        approach_xy = self.grid_to_real(approach.approach_node)
+        ax.scatter([goal_xy[0]], [goal_xy[1]], s=65, marker="*")
+        ax.scatter([approach_xy[0]], [approach_xy[1]], s=42, marker="o")
 
-        corridor_real = [self.grid_to_real(n) for n in approach.corridor_nodes]
+        if approach.connector_nodes:
+            connector_real = [self.grid_to_real(n) for n in approach.connector_nodes]
+            ax.scatter(
+                [p[0] for p in connector_real],
+                [p[1] for p in connector_real],
+                s=18,
+                marker="s",
+            )
+            for point in connector_real:
+                ax.plot(
+                    [point[0], approach_xy[0]],
+                    [point[1], approach_xy[1]],
+                    linewidth=0.6,
+                    alpha=0.35,
+                )
+
+        # The required final segment: exactly approach -> physical goal.
         ax.plot(
-            [p[0] for p in corridor_real],
-            [p[1] for p in corridor_real],
-            linewidth=2.4,
+            [approach_xy[0], goal_xy[0]],
+            [approach_xy[1], goal_xy[1]],
+            linewidth=2.8,
         )
 
         if sample_path:
@@ -771,7 +778,7 @@ class FixedFourRoomPathGenerator:
             self.room_bounds["y_max"] + 0.5,
         )
         ax.set_title(
-            "Fixed graph: goal star, approach circle, corridor anchor square"
+            "Fixed graph: goal star, pre-goal circle, connector nodes squares"
         )
         fig.tight_layout()
         fig.savefig(self.graphs_dir / f"fixed_graph_target_{index}.png")
@@ -784,36 +791,41 @@ class FixedFourRoomPathGenerator:
         print(
             "Wall obstacle strip: "
             f"depth={self.wall_obstacle_depth:.2f} m, "
-            f"robot-center exclusion={self.wall_obstacle_depth + self.footprint_clearance:.2f} m"
+            f"robot-center exclusion="
+            f"{self.wall_obstacle_depth + self.footprint_clearance:.2f} m"
         )
         print(
-            "Approach: "
-            f"distance={self.approach_distance:.2f} m, "
-            f"final corridor={self.min_final_corridor_length:.2f}.."
-            f"{self.final_corridor_length:.2f} m"
+            "Final approach: "
+            f"pre-goal distance={self.approach_distance:.2f} m, "
+            f"connection radius={self.approach_connection_radius:.2f} m"
         )
         print(f"Target positions: {self.targets_real}")
 
-        graph = self._build_graph()
-        print(f"Graph: {graph.number_of_nodes()} nodes, {graph.number_of_edges()} edges")
+        base_graph = self._build_graph()
+        print(
+            f"Graph: {base_graph.number_of_nodes()} nodes, "
+            f"{base_graph.number_of_edges()} edges"
+        )
 
         result: PathMap = {}
         for target_index, goal_real in enumerate(self.targets_real):
             requested_target = self.real_to_grid(goal_real)
-            approach = self._build_target_approach(graph, goal_real)
+            target_graph, approach = self._build_target_approach_graph(
+                base_graph,
+                goal_real,
+            )
 
-            paths_from_anchor = nx.single_source_dijkstra_path(
-                graph,
-                approach.anchor_node,
+            paths_from_approach = nx.single_source_dijkstra_path(
+                target_graph,
+                approach.approach_node,
                 weight="weight",
             )
-            starts = list(paths_from_anchor.keys())
+            # Runtime starts are ordinary navigation-graph nodes. The temporary
+            # pre-goal node itself is not emitted as a start key.
+            starts = [node for node in paths_from_approach if node in base_graph]
             if self.limit_start_nodes is not None:
                 starts = starts[: self.limit_start_nodes]
 
-            # The database key remains the physical goal grid node because
-            # Path_manager performs an exact lookup from target_positions. Paths
-            # intentionally terminate at approach_node instead of the occupied goal.
             target_key = f"{requested_target[0]},{requested_target[1]}"
             if target_key in result:
                 raise RuntimeError(
@@ -823,30 +835,35 @@ class FixedFourRoomPathGenerator:
             start_map: Dict[str, List[GridNode]] = {}
             farthest_sample: Optional[List[GridNode]] = None
             farthest_length = -1
-            corridor_tail = list(approach.corridor_nodes[1:])
 
             for start in starts:
-                base_path = list(reversed(paths_from_anchor[start]))
-                raw_path = base_path + corridor_tail
+                # Dijkstra paths are approach -> start, so reverse them. The
+                # resulting base path ends exactly at approach_node. Append only
+                # the physical goal node: this creates one straight final segment.
+                base_path = list(reversed(paths_from_approach[start]))
+                raw_path = base_path
+                if raw_path[-1] != requested_target:
+                    raw_path = raw_path + [requested_target]
+
                 start_map[f"{start[0]},{start[1]}"] = raw_path
                 if len(raw_path) > farthest_length:
                     farthest_length = len(raw_path)
                     farthest_sample = raw_path
 
             result[target_key] = start_map
-            approach_real = self.grid_to_real(approach.approach_node)
-            anchor_real = self.grid_to_real(approach.anchor_node)
+            approach_xy = self.grid_to_real(approach.approach_node)
+            goal_xy = self.grid_to_real(requested_target)
             print(
                 f"Target {target_index + 1}/{len(self.targets_real)} "
-                f"goal={target_key}, anchor={anchor_real}, "
-                f"approach={approach_real}, "
-                f"distance={approach.approach_distance_used:.2f} m: "
+                f"goal={goal_xy}, approach={approach_xy}, "
+                f"distance={approach.approach_distance_used:.2f} m, "
+                f"connectors={len(approach.connector_nodes)}: "
                 f"{len(start_map)} start nodes"
             )
 
             if save_graph_images:
                 self._save_debug_graph(
-                    graph,
+                    base_graph,
                     approach,
                     farthest_sample,
                     target_index,
@@ -860,7 +877,6 @@ class FixedFourRoomPathGenerator:
         print(f"Saved: {self.paths_file}")
         print(f"Elapsed: {elapsed:.2f} s")
         return str(self.paths_file)
-
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Generate fixed four-room expert paths")
@@ -897,20 +913,20 @@ def main() -> None:
     parser.add_argument(
         "--approach-distance",
         type=float,
-        default=1.31,
-        help="Robot-center stopping distance from the physical goal",
+        default=1.0,
+        help=(
+            "Distance from the physical goal to the mandatory pre-goal point, "
+            "measured toward the room center"
+        ),
     )
     parser.add_argument(
-        "--final-corridor-length",
+        "--approach-connection-radius",
         type=float,
-        default=1.5,
-        help="Preferred straight final approach length from the room-center side",
-    )
-    parser.add_argument(
-        "--min-final-corridor-length",
-        type=float,
-        default=0.5,
-        help="Shortest acceptable straight final approach when an obstacle is nearby",
+        default=2.0,
+        help=(
+            "Maximum radius for connecting the pre-goal point to visible "
+            "base-graph nodes"
+        ),
     )
     parser.add_argument(
         "--passage-center",
@@ -943,8 +959,7 @@ def main() -> None:
         obstacle_center_clearance=args.obstacle_center_clearance,
         wall_obstacle_depth=args.wall_obstacle_depth,
         approach_distance=args.approach_distance,
-        final_corridor_length=args.final_corridor_length,
-        min_final_corridor_length=args.min_final_corridor_length,
+        approach_connection_radius=args.approach_connection_radius,
         passage_center=args.passage_center,
         passage_width=args.passage_width,
         navigation_outer_limit=args.navigation_outer_limit,

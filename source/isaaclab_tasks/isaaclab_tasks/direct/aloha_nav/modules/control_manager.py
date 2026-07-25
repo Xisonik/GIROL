@@ -1,720 +1,89 @@
-import torch
+from __future__ import annotations
+
 import math
+from typing import Iterable
+
+import torch
+
 
 class VectorizedPurePursuit:
-    PATH_FOLLOWING = 0
-    FINAL_TURN = 1
-    FINAL_DRIVE = 2
-    COMPLETE = 3
-
-    def __init__(self, num_envs, device='cuda', max_path_length=150, lookahead_distance=0.35,
-                 base_linear_velocity=1.0, max_angular_velocity=2.8, arrival_threshold=0.2):
-        self.num_envs = num_envs
-        self.device = torch.device(device)
-        self.max_path_length = max_path_length
-        self.lookahead_distance = lookahead_distance
-        self.base_linear_velocity = float(base_linear_velocity)
-        self.max_angular_velocity = float(max_angular_velocity)
-        self.arrival_threshold = float(arrival_threshold)
-
-        # Final approach consists of two explicit phases:
-        # 1) rotate toward target_positions; 2) drive directly to the target.
-        self.final_turn_threshold = 0.10
-        self.final_drive_realign_threshold = 0.35
-        self.final_turn_gain = 2.0
-        self.final_drive_turn_gain = 2.0
-
-        # A robot position outside this range is considered corrupted.
-        self.invalid_position_limit = 100.0
-        # A computed steering point farther than this is considered invalid.
-        self.max_next_point_distance = 100.0
-
-        # paths: (num_envs, max_path_length, 2) padded with NaN
-        self.paths = torch.full(
-            (num_envs, max_path_length, 2),
-            float('nan'),
-            dtype=torch.float32,
-            device=self.device,
-        )
-        self.path_lengths = torch.zeros(
-            num_envs, dtype=torch.int64, device=self.device
-        )
-        self.finished = torch.ones(
-            num_envs, dtype=torch.bool, device=self.device
-        )
-        self.target_positions = torch.full(
-            (num_envs, 2),
-            float('nan'),
-            dtype=torch.float32,
-            device=self.device,
-        )
-
-        # Progress along the path. It is never allowed to move backwards.
-        self.progress_arclen = torch.zeros(
-            num_envs, dtype=torch.float32, device=self.device
-        )
-        self.final_phase = torch.full(
-            (num_envs,),
-            self.COMPLETE,
-            dtype=torch.int8,
-            device=self.device,
-        )
-
-    def update_paths(self, env_indices, new_paths, target_positions):
-        if not isinstance(env_indices, torch.Tensor):
-            env_indices = torch.tensor(
-                env_indices, dtype=torch.int64, device=self.device
-            )
-        else:
-            env_indices = env_indices.to(
-                device=self.device, dtype=torch.int64
-            )
-
-        self.target_positions[env_indices] = torch.as_tensor(
-            target_positions,
-            dtype=torch.float32,
-            device=self.device,
-        )
-
-        for i, env_id in enumerate(env_indices):
-            path = torch.as_tensor(
-                new_paths[i],
-                dtype=torch.float32,
-                device=self.device,
-            )
-            length = int(path.shape[0])
-            if length > self.max_path_length:
-                raise ValueError(
-                    f"Path length {length} exceeds max_path_length "
-                    f"{self.max_path_length}"
-                )
-
-            self.paths[env_id].fill_(float('nan'))
-            if length > 0:
-                self.paths[env_id, :length] = path
-            self.path_lengths[env_id] = length
-            self.progress_arclen[env_id] = 0.0
-            self.final_phase[env_id] = (
-                self.PATH_FOLLOWING if length >= 2 else self.FINAL_TURN
-            )
-
-        self.finished[env_indices] = False
-
-    def _report_invalid_robot_state(
-        self,
-        positions: torch.Tensor,
-        orientations: torch.Tensor,
-        invalid_mask: torch.Tensor,
-    ) -> None:
-        if not invalid_mask.any():
-            return
-
-        ids = torch.where(invalid_mask)[0]
-        pos_values = positions[ids, :2].detach().cpu().tolist()
-        yaw_values = orientations[ids].detach().cpu().tolist()
-        has_nan = (
-            torch.isnan(positions[ids, :2]).any()
-            or torch.isnan(orientations[ids]).any()
-        )
-
-        print(
-            "[PURE PURSUIT ERROR] Invalid robot state: "
-            f"envs={ids.tolist()}, contains_nan={bool(has_nan)}, "
-            f"positions={pos_values}, yaws={yaw_values}. "
-            "Linear and angular speeds are set to 0."
-        )
-
-    def _apply_final_approach(
-        self,
-        positions: torch.Tensor,
-        orientations: torch.Tensor,
-        valid_robot: torch.Tensor,
-        linear_vels: torch.Tensor,
-        angular_vels: torch.Tensor,
-    ) -> None:
-        """Run the two-stage final approach: turn first, then drive."""
-        in_final = (
-            (self.final_phase == self.FINAL_TURN)
-            | (self.final_phase == self.FINAL_DRIVE)
-        )
-        candidates = in_final & (~self.finished) & valid_robot
-        if not candidates.any():
-            return
-
-        candidate_ids = torch.where(candidates)[0]
-        targets = self.target_positions[candidate_ids]
-        pos = positions[candidate_ids, :2]
-
-        target_finite = torch.isfinite(targets).all(dim=1)
-        target_distances = torch.linalg.norm(targets - pos, dim=1)
-        target_distance_valid = (
-            torch.isfinite(target_distances)
-            & (target_distances < self.max_next_point_distance)
-        )
-        valid_target = target_finite & target_distance_valid
-
-        invalid_target = ~valid_target
-        if invalid_target.any():
-            bad_ids = candidate_ids[invalid_target]
-            bad_targets = targets[invalid_target].detach().cpu().tolist()
-            bad_distances = target_distances[invalid_target].detach().cpu().tolist()
-            has_nan = torch.isnan(targets[invalid_target]).any()
-            print(
-                "[PURE PURSUIT ERROR] Invalid final target: "
-                f"envs={bad_ids.tolist()}, contains_nan={bool(has_nan)}, "
-                f"points={bad_targets}, distances={bad_distances}. "
-                "Linear and angular speeds are set to 0."
-            )
-
-        valid_ids = candidate_ids[valid_target]
-        if valid_ids.numel() == 0:
-            return
-
-        pos_valid = positions[valid_ids, :2]
-        ori_valid = orientations[valid_ids]
-        target_valid = self.target_positions[valid_ids]
-        to_targets = target_valid - pos_valid
-        distances = torch.linalg.norm(to_targets, dim=1)
-        target_angles = torch.atan2(to_targets[:, 1], to_targets[:, 0])
-        alphas = (
-            (target_angles - ori_valid + math.pi) % (2 * math.pi)
-            - math.pi
-        )
-
-        # Reaching the physical target completes the controller.
-        reached = distances <= self.arrival_threshold
-        if reached.any():
-            reached_ids = valid_ids[reached]
-            self.final_phase[reached_ids] = self.COMPLETE
-            self.finished[reached_ids] = True
-            linear_vels[reached_ids] = 0.0
-            angular_vels[reached_ids] = 0.0
-
-        remaining = ~reached
-        if not remaining.any():
-            return
-
-        ids = valid_ids[remaining]
-        errors = alphas[remaining]
-        distances_remaining = distances[remaining]
-        phases = self.final_phase[ids]
-
-        # Phase 1: rotate in place until the target is in front of the robot.
-        turn_rows = phases == self.FINAL_TURN
-        if turn_rows.any():
-            turn_ids = ids[turn_rows]
-            turn_errors = errors[turn_rows]
-            turn_commands = torch.clamp(
-                self.final_turn_gain * turn_errors,
-                -self.max_angular_velocity,
-                self.max_angular_velocity,
-            )
-            linear_vels[turn_ids] = 0.0
-            angular_vels[turn_ids] = turn_commands
-
-            aligned = turn_errors.abs() <= self.final_turn_threshold
-            if aligned.any():
-                aligned_ids = turn_ids[aligned]
-                self.final_phase[aligned_ids] = self.FINAL_DRIVE
-                angular_vels[aligned_ids] = 0.0
-
-        # Phase 2: drive directly to the target with heading correction.
-        # Re-read phases because some environments may have just transitioned.
-        phases = self.final_phase[ids]
-        drive_rows = phases == self.FINAL_DRIVE
-        if drive_rows.any():
-            drive_ids = ids[drive_rows]
-            drive_errors = errors[drive_rows]
-            drive_distances = distances_remaining[drive_rows]
-
-            # If the robot deviates too far, return to the turning phase.
-            needs_realign = (
-                drive_errors.abs() > self.final_drive_realign_threshold
-            )
-            if needs_realign.any():
-                realign_ids = drive_ids[needs_realign]
-                realign_errors = drive_errors[needs_realign]
-                self.final_phase[realign_ids] = self.FINAL_TURN
-                linear_vels[realign_ids] = 0.0
-                angular_vels[realign_ids] = torch.clamp(
-                    self.final_turn_gain * realign_errors,
-                    -self.max_angular_velocity,
-                    self.max_angular_velocity,
-                )
-
-            drive_ok = ~needs_realign
-            if drive_ok.any():
-                move_ids = drive_ids[drive_ok]
-                move_errors = drive_errors[drive_ok]
-                move_distances = drive_distances[drive_ok]
-
-                angular = torch.clamp(
-                    self.final_drive_turn_gain * move_errors,
-                    -self.max_angular_velocity,
-                    self.max_angular_velocity,
-                )
-                heading_scale = torch.clamp(
-                    1.0
-                    - move_errors.abs()
-                    / self.final_drive_realign_threshold,
-                    min=0.0,
-                    max=1.0,
-                )
-                distance_scale = torch.clamp(
-                    move_distances
-                    / max(self.arrival_threshold * 2.0, 1.0e-6),
-                    min=0.15,
-                    max=1.0,
-                )
-                linear = (
-                    self.base_linear_velocity
-                    * heading_scale
-                    * distance_scale
-                )
-
-                linear_vels[move_ids] = linear
-                angular_vels[move_ids] = angular
-
-    def compute_controls(self, positions, orientations):
-        positions = torch.as_tensor(
-            positions, dtype=torch.float32, device=self.device
-        )
-        orientations = torch.as_tensor(
-            orientations, dtype=torch.float32, device=self.device
-        ).flatten()
-
-        linear_vels = torch.zeros(
-            self.num_envs, dtype=torch.float32, device=self.device
-        )
-        angular_vels = torch.zeros_like(linear_vels)
-
-        # Robot input validation requested for the continuous controller.
-        robot_position_finite = torch.isfinite(positions[:, :2]).all(dim=1)
-        robot_position_in_range = (
-            positions[:, :2].abs() <= self.invalid_position_limit
-        ).all(dim=1)
-        robot_yaw_finite = torch.isfinite(orientations)
-        valid_robot = (
-            robot_position_finite
-            & robot_position_in_range
-            & robot_yaw_finite
-        )
-
-        invalid_robot = ~valid_robot
-        self._report_invalid_robot_state(
-            positions,
-            orientations,
-            invalid_robot,
-        )
-        if invalid_robot.any():
-            # Do not preserve a previously corrupted NaN progress value.
-            self.progress_arclen[invalid_robot] = 0.0
-
-        active = (
-            (self.path_lengths >= 2)
-            & (self.final_phase == self.PATH_FOLLOWING)
-            & (~self.finished)
-            & valid_robot
-        )
-
-        if not active.any():
-            self._apply_final_approach(
-                positions,
-                orientations,
-                valid_robot,
-                linear_vels,
-                angular_vels,
-            )
-            return linear_vels, angular_vels
-
-        active_indices = torch.where(active)[0]
-        num_active = active_indices.shape[0]
-        pos = positions[active_indices, :2]
-        ori = orientations[active_indices]
-        paths_active = self.paths[active_indices]
-        path_lens = self.path_lengths[active_indices]
-
-        max_segments = self.max_path_length - 1
-        segment_starts = paths_active[:, :-1, :]
-        segment_ends = paths_active[:, 1:, :]
-        segment_vecs = segment_ends - segment_starts
-        segment_lengths = torch.linalg.norm(segment_vecs, dim=-1)
-
-        seg_index = torch.arange(
-            max_segments, device=self.device
-        ).unsqueeze(0).expand(num_active, max_segments)
-        segment_mask = seg_index < (path_lens - 1).unsqueeze(1)
-        segment_mask &= torch.isfinite(segment_starts).all(dim=-1)
-        segment_mask &= torch.isfinite(segment_ends).all(dim=-1)
-        segment_mask &= torch.isfinite(segment_lengths)
-        segment_mask &= segment_lengths > 1.0e-6
-
-        # Replace invalid/padded values before arithmetic so NaN padding cannot
-        # contaminate otherwise valid environments.
-        safe_starts = torch.where(
-            segment_mask.unsqueeze(-1),
-            segment_starts,
-            torch.zeros_like(segment_starts),
-        )
-        safe_vecs = torch.where(
-            segment_mask.unsqueeze(-1),
-            segment_vecs,
-            torch.zeros_like(segment_vecs),
-        )
-        safe_lengths = torch.where(
-            segment_mask,
-            segment_lengths,
-            torch.zeros_like(segment_lengths),
-        )
-
-        pos_exp = pos.unsqueeze(1)
-        to_starts = pos_exp - safe_starts
-        denom = safe_lengths.square() + 1.0e-8
-        projs = torch.sum(to_starts * safe_vecs, dim=-1) / denom
-        projs_clamped = torch.clamp(projs, min=0.0, max=1.0)
-        closest_points = (
-            safe_starts
-            + safe_vecs * projs_clamped.unsqueeze(-1)
-        )
-        dists = torch.linalg.norm(pos_exp - closest_points, dim=-1)
-        dists[~segment_mask] = float('inf')
-
-        min_dists, min_segments = torch.min(dists, dim=1)
-        row_ids = torch.arange(num_active, device=self.device)
-        min_projs = projs_clamped[row_ids, min_segments]
-        min_seg_lengths = safe_lengths[row_ids, min_segments]
-
-        padded_segment_lengths = safe_lengths
-        cum_lengths = torch.cat(
-            [
-                torch.zeros(num_active, 1, device=self.device),
-                padded_segment_lengths,
-            ],
-            dim=1,
-        )
-        cum_lengths = torch.cumsum(cum_lengths, dim=1)
-
-        cum_at_min_seg = cum_lengths[row_ids, min_segments]
-        closest_arclen = (
-            cum_at_min_seg + min_projs * min_seg_lengths
-        )
-
-        valid_path_geometry = (
-            segment_mask.any(dim=1)
-            & torch.isfinite(min_dists)
-            & torch.isfinite(closest_arclen)
-        )
-
-        invalid_path_geometry = ~valid_path_geometry
-        if invalid_path_geometry.any():
-            bad_ids = active_indices[invalid_path_geometry]
-            has_nan = torch.isnan(
-                paths_active[invalid_path_geometry]
-            ).any()
-            print(
-                "[PURE PURSUIT ERROR] Cannot calculate next point from path: "
-                f"envs={bad_ids.tolist()}, contains_nan={bool(has_nan)}, "
-                f"path_lengths={path_lens[invalid_path_geometry].tolist()}. "
-                "Linear and angular speeds are set to 0."
-            )
-
-        prev_progress = self.progress_arclen[active_indices].clone()
-        invalid_previous_progress = ~torch.isfinite(prev_progress)
-        if invalid_previous_progress.any():
-            bad_ids = active_indices[invalid_previous_progress]
-            print(
-                "[PURE PURSUIT ERROR] NaN/Inf in progress_arclen: "
-                f"envs={bad_ids.tolist()}. Progress is reset and speeds "
-                "are set to 0 for this step."
-            )
-            prev_progress[invalid_previous_progress] = 0.0
-            self.progress_arclen[bad_ids] = 0.0
-            valid_path_geometry &= ~invalid_previous_progress
-
-        new_progress = prev_progress.clone()
-        new_progress[valid_path_geometry] = torch.maximum(
-            prev_progress[valid_path_geometry],
-            closest_arclen[valid_path_geometry],
-        )
-        self.progress_arclen[active_indices[valid_path_geometry]] = (
-            new_progress[valid_path_geometry]
-        )
-
-        target_arclen = new_progress + self.lookahead_distance
-        total_lengths = cum_lengths[
-            row_ids,
-            (path_lens - 1).clamp(max=max_segments),
-        ]
-
-        lookahead_points = pos.clone()
-        is_beyond = (
-            valid_path_geometry
-            & (target_arclen >= total_lengths)
-        )
-
-        last_point_indices = (
-            path_lens - 1
-        ).clamp(max=self.max_path_length - 1)
-        last_points = paths_active[row_ids, last_point_indices]
-        lookahead_points[is_beyond] = last_points[is_beyond]
-
-        not_beyond = valid_path_geometry & (~is_beyond)
-        if not_beyond.any():
-            target_arclen_nb = target_arclen[not_beyond]
-            cum_lengths_nb = cum_lengths[not_beyond]
-            segs_nb = torch.searchsorted(
-                cum_lengths_nb,
-                target_arclen_nb.unsqueeze(1),
-                right=False,
-            ).squeeze(1) - 1
-            segs_nb = torch.clamp(
-                segs_nb,
-                min=0,
-                max=max_segments - 1,
-            )
-
-            nb_rows = torch.arange(
-                segs_nb.shape[0], device=self.device
-            )
-            cum_at_seg_nb = cum_lengths_nb[nb_rows, segs_nb]
-            seg_lengths_nb = padded_segment_lengths[
-                not_beyond, segs_nb
-            ]
-            fracs_nb = (
-                target_arclen_nb - cum_at_seg_nb
-            ) / (seg_lengths_nb + 1.0e-8)
-            fracs_nb = torch.clamp(fracs_nb, 0.0, 1.0)
-            starts_nb = safe_starts[not_beyond, segs_nb]
-            vecs_nb = safe_vecs[not_beyond, segs_nb]
-            lookahead_points[not_beyond] = (
-                starts_nb + vecs_nb * fracs_nb.unsqueeze(-1)
-            )
-
-        # Validate the actual point the controller is about to follow.
-        next_point_finite = torch.isfinite(
-            lookahead_points
-        ).all(dim=1)
-        next_point_distance = torch.linalg.norm(
-            lookahead_points - pos,
-            dim=1,
-        )
-        next_point_distance_valid = (
-            torch.isfinite(next_point_distance)
-            & (next_point_distance < self.max_next_point_distance)
-        )
-        valid_next_point = (
-            valid_path_geometry
-            & next_point_finite
-            & next_point_distance_valid
-        )
-
-        invalid_next_point = valid_path_geometry & (~valid_next_point)
-        if invalid_next_point.any():
-            bad_ids = active_indices[invalid_next_point]
-            bad_points = lookahead_points[
-                invalid_next_point
-            ].detach().cpu().tolist()
-            bad_distances = next_point_distance[
-                invalid_next_point
-            ].detach().cpu().tolist()
-
-            # A non-finite lookahead point normally means that the path has
-            # reached NaN padding or contains corrupted coordinates. Stop path
-            # following and reuse the existing final-alignment stage. The
-            # _apply_final_approach below immediately starts the two-stage
-            # final maneuver: rotate toward target_positions, then drive.
-            nonfinite_next_point = (
-                invalid_next_point & (~next_point_finite)
-            )
-            if nonfinite_next_point.any():
-                alignment_ids = active_indices[nonfinite_next_point]
-                self.final_phase[alignment_ids] = self.FINAL_TURN
-                self.finished[alignment_ids] = False
-                self.progress_arclen[alignment_ids] = 0.0
-
-                print(
-                    "[PURE PURSUIT WARNING] Non-finite next point: "
-                    f"envs={alignment_ids.tolist()}. "
-                    "Path following is stopped; switching to final turn "
-                    "and direct drive toward target_positions."
-                )
-
-            # A finite point farther than the configured limit is not treated
-            # as path completion. Keep zero speed for this step and report it.
-            finite_but_far = invalid_next_point & next_point_finite
-            if finite_but_far.any():
-                far_ids = active_indices[finite_but_far]
-                far_points = lookahead_points[
-                    finite_but_far
-                ].detach().cpu().tolist()
-                far_distances = next_point_distance[
-                    finite_but_far
-                ].detach().cpu().tolist()
-
-                print(
-                    "[PURE PURSUIT ERROR] Next point is too far: "
-                    f"envs={far_ids.tolist()}, points={far_points}, "
-                    f"distances={far_distances}. Expected distance less "
-                    "than 100 m. Linear and angular speeds are set to 0."
-                )
-
-        lin_vels_active = torch.zeros(
-            num_active, dtype=torch.float32, device=self.device
-        )
-        ang_vels_active = torch.zeros_like(lin_vels_active)
-
-        if valid_next_point.any():
-            valid_rows = torch.where(valid_next_point)[0]
-            to_targets = (
-                lookahead_points[valid_rows] - pos[valid_rows]
-            )
-            target_angles = torch.atan2(
-                to_targets[:, 1], to_targets[:, 0]
-            )
-            alphas = target_angles - ori[valid_rows]
-            alphas = (
-                (alphas + math.pi) % (2 * math.pi)
-                - math.pi
-            )
-            curvatures = (
-                2.0 * alphas
-                / (self.lookahead_distance + 1.0e-8)
-            )
-
-            angular = curvatures * self.base_linear_velocity
-            angular = torch.clamp(
-                angular,
-                -self.max_angular_velocity,
-                self.max_angular_velocity,
-            )
-            linear = self.base_linear_velocity * (
-                1.0
-                - torch.abs(angular)
-                / (self.max_angular_velocity + 1.0e-8)
-            )
-            linear = torch.clamp(linear, min=0.0)
-
-            low_linear = linear < 0.2
-            if low_linear.any():
-                signs = torch.sign(angular[low_linear])
-                signs[signs == 0] = 1
-                angular[low_linear] = signs * 2.8
-
-            lin_vels_active[valid_rows] = linear
-            ang_vels_active[valid_rows] = angular
-
-        # Mark valid active environments that reached the final path point.
-        last_point_valid = torch.isfinite(last_points).all(dim=1)
-        dists_to_end = torch.full(
-            (num_active,),
-            float('inf'),
-            dtype=torch.float32,
-            device=self.device,
-        )
-        end_check = valid_next_point & last_point_valid
-        if end_check.any():
-            dists_to_end[end_check] = torch.linalg.norm(
-                pos[end_check] - last_points[end_check],
-                dim=1,
-            )
-
-        finished_active = (
-            end_check
-            & torch.isfinite(dists_to_end)
-            & (dists_to_end < self.arrival_threshold)
-        )
-        if finished_active.any():
-            final_ids = active_indices[finished_active]
-            self.final_phase[final_ids] = self.FINAL_TURN
-            self.finished[final_ids] = False
-            self.progress_arclen[final_ids] = 0.0
-            lin_vels_active[finished_active] = 0.0
-            ang_vels_active[finished_active] = 0.0
-
-        linear_vels[active_indices] = lin_vels_active
-        angular_vels[active_indices] = ang_vels_active
-
-        self._apply_final_approach(
-            positions,
-            orientations,
-            valid_robot,
-            linear_vels,
-            angular_vels,
-        )
-
-        # Final containment: a NaN produced anywhere in the controller never
-        # reaches the wheel commands.
-        invalid_output = (
-            ~torch.isfinite(linear_vels)
-            | ~torch.isfinite(angular_vels)
-        )
-        if invalid_output.any():
-            bad_ids = torch.where(invalid_output)[0]
-            print(
-                "[PURE PURSUIT ERROR] Controller produced NaN/Inf speed: "
-                f"envs={bad_ids.tolist()}, "
-                f"linear={linear_vels[bad_ids].detach().cpu().tolist()}, "
-                f"angular={angular_vels[bad_ids].detach().cpu().tolist()}. "
-                "Speeds are replaced with 0."
-            )
-            linear_vels[invalid_output] = 0.0
-            angular_vels[invalid_output] = 0.0
-            self.progress_arclen[bad_ids] = 0.0
-
-        return linear_vels, angular_vels
-
-
-class VectorizedDiscretePathController:
-    """Vectorized path follower for Habitat-style discrete navigation.
-
-    Actions:
-        0: turn left
-        1: turn right
-        2: move forward
-
-    The controller advances through path waypoints. It moves forward when the
-    heading error is within ``heading_threshold_deg``; otherwise it selects the
-    fixed-angle turn that reduces the error.
-
-    By default, the heading threshold is half of the discrete turn angle. This
-    is the correct quantization boundary: above half a turn step, one turn is
-    closer to the desired heading than moving without turning.
+    """Vectorized Pure Pursuit over the complete path polyline.
+
+    Algorithmic behavior is intentionally the same as the previously working
+    controller:
+      * the closest segment is searched over the complete valid path;
+      * progress is monotonic in global path arclength;
+      * lookahead may cross a vertex and lie on a later segment;
+      * there are no start-turn or per-segment-turn states;
+      * reaching the last path point sets ``finished=True``;
+      * a finished environment only turns toward ``target_positions``.
+
+    Set ``debug=True`` to print a complete controller log automatically from
+    every ``compute_controls`` call. ``debug_every_n_steps`` controls cadence.
     """
 
-    TURN_LEFT = 0
-    TURN_RIGHT = 1
-    MOVE_FORWARD = 2
+    PATH_FOLLOWING = 0
+    FINAL_ALIGNMENT = 1
+    IDLE = 2
+
+    STAGE_NAMES = {
+        PATH_FOLLOWING: "PATH_FOLLOWING",
+        FINAL_ALIGNMENT: "FINAL_ALIGNMENT",
+        IDLE: "IDLE",
+    }
 
     def __init__(
         self,
         num_envs: int,
         device: str = "cuda",
-        max_path_length: int = 128,
-        turn_angle_deg: float = 35.0,
-        heading_threshold_deg: float | None = None,
-        waypoint_threshold: float = 0.15,
-        final_waypoint_threshold: float = 0.20,
-        invalid_coordinate_limit: float = 100.0,
-    ):
+        max_path_length: int = 150,
+        lookahead_distance: float = 0.35,
+        base_linear_velocity: float = 1.0,
+        max_angular_velocity: float = 1.8,
+        arrival_threshold: float = 0.2,
+        low_linear_velocity_threshold: float = 0.2,
+        sharp_turn_angular_velocity: float = 2.8,
+        final_alignment_threshold: float = 0.1,
+        final_alignment_angular_velocity: float = 2.0,
+        segment_length_epsilon: float = 1.0e-6,
+        numeric_epsilon: float = 1.0e-8,
+        invalid_position_limit: float = 100.0,
+        max_next_point_distance: float = 100.0,
+        debug: bool = False,
+        debug_every_n_steps: int = 1,
+        debug_env_indices: Iterable[int] | None = None,
+        debug_precision: int = 3,
+    ) -> None:
         self.num_envs = int(num_envs)
         self.device = torch.device(device)
         self.max_path_length = int(max_path_length)
 
-        self.turn_angle_rad = math.radians(float(turn_angle_deg))
-        if heading_threshold_deg is None:
-            heading_threshold_deg = 0.5 * float(turn_angle_deg)
-        self.heading_threshold_rad = math.radians(float(heading_threshold_deg))
+        self.lookahead_distance = float(lookahead_distance)
+        self.base_linear_velocity = float(base_linear_velocity)
+        self.max_angular_velocity = float(max_angular_velocity)
+        self.arrival_threshold = float(arrival_threshold)
+        self.low_linear_velocity_threshold = float(low_linear_velocity_threshold)
+        self.sharp_turn_angular_velocity = float(sharp_turn_angular_velocity)
+        self.final_alignment_threshold = float(final_alignment_threshold)
+        self.final_alignment_angular_velocity = float(
+            final_alignment_angular_velocity
+        )
+        self.segment_length_epsilon = float(segment_length_epsilon)
+        self.numeric_epsilon = float(numeric_epsilon)
+        self.invalid_position_limit = float(invalid_position_limit)
+        self.max_next_point_distance = float(max_next_point_distance)
 
-        self.waypoint_threshold = float(waypoint_threshold)
-        self.final_waypoint_threshold = float(final_waypoint_threshold)
-        self.invalid_coordinate_limit = float(invalid_coordinate_limit)
+        self.debug = bool(debug)
+        self.debug_every_n_steps = int(debug_every_n_steps)
+        self.debug_env_indices = (
+            None
+            if debug_env_indices is None
+            else tuple(int(i) for i in debug_env_indices)
+        )
+        self.debug_precision = int(debug_precision)
+        self._control_step = 0
 
-        if self.max_path_length < 1:
-            raise ValueError("max_path_length must be positive")
-        if self.waypoint_threshold <= 0:
-            raise ValueError("waypoint_threshold must be positive")
-        if self.final_waypoint_threshold <= 0:
-            raise ValueError("final_waypoint_threshold must be positive")
+        self._validate_config()
 
         self.paths = torch.full(
             (self.num_envs, self.max_path_length, 2),
@@ -723,10 +92,7 @@ class VectorizedDiscretePathController:
             device=self.device,
         )
         self.path_lengths = torch.zeros(
-            self.num_envs, dtype=torch.long, device=self.device
-        )
-        self.waypoint_indices = torch.zeros(
-            self.num_envs, dtype=torch.long, device=self.device
+            self.num_envs, dtype=torch.int64, device=self.device
         )
         self.finished = torch.ones(
             self.num_envs, dtype=torch.bool, device=self.device
@@ -737,228 +103,894 @@ class VectorizedDiscretePathController:
             dtype=torch.float32,
             device=self.device,
         )
-        self.last_heading_error = torch.zeros(
+        self.progress_arclen = torch.zeros(
             self.num_envs, dtype=torch.float32, device=self.device
         )
 
-    @staticmethod
-    def _wrap_to_pi(angle: torch.Tensor) -> torch.Tensor:
-        return torch.atan2(torch.sin(angle), torch.cos(angle))
-
-    def _sanitize_path(self, path: torch.Tensor) -> torch.Tensor:
-        """Remove padding, invalid coordinates, and consecutive duplicates."""
-        path = path.to(device=self.device, dtype=torch.float32).reshape(-1, 2)
-
-        valid = torch.isfinite(path).all(dim=-1)
-        valid &= (path.abs() <= self.invalid_coordinate_limit).all(dim=-1)
-        path = path[valid]
-
-        if path.shape[0] <= 1:
-            return path
-
-        delta = torch.linalg.norm(path[1:] - path[:-1], dim=-1)
-        keep = torch.ones(path.shape[0], dtype=torch.bool, device=self.device)
-        keep[1:] = delta > 1e-6
-        return path[keep]
-
-    @staticmethod
-    def _validate_path_length(path: torch.Tensor, max_length: int) -> torch.Tensor:
-        if path.shape[0] > max_length:
-            raise ValueError(
-                f"Dense path contains {path.shape[0]} nodes, "
-                f"but max_path_length={max_length}. Increase max_path_length; "
-                "resampling would create unsafe shortcuts."
-            )
-        return path
-
-    @torch.no_grad()
-    def update_paths(
-        self,
-        env_indices: torch.Tensor,
-        new_paths,
-        target_positions,
-    ) -> None:
-        env_indices = torch.as_tensor(
-            env_indices, dtype=torch.long, device=self.device
-        ).flatten()
-        target_positions = torch.as_tensor(
-            target_positions, dtype=torch.float32, device=self.device
+        # Diagnostic state from the last compute_controls call.
+        self.last_stage = torch.full(
+            (self.num_envs,),
+            self.IDLE,
+            dtype=torch.int8,
+            device=self.device,
+        )
+        self.last_closest_segment = torch.full(
+            (self.num_envs,), -1, dtype=torch.int64, device=self.device
+        )
+        self.last_closest_projection = torch.full(
+            (self.num_envs,), float("nan"), dtype=torch.float32, device=self.device
+        )
+        self.last_closest_distance = torch.full(
+            (self.num_envs,), float("nan"), dtype=torch.float32, device=self.device
+        )
+        self.last_closest_arclen = torch.full(
+            (self.num_envs,), float("nan"), dtype=torch.float32, device=self.device
+        )
+        self.last_target_arclen = torch.full(
+            (self.num_envs,), float("nan"), dtype=torch.float32, device=self.device
+        )
+        self.last_total_arclen = torch.full(
+            (self.num_envs,), float("nan"), dtype=torch.float32, device=self.device
+        )
+        self.last_lookahead_segment = torch.full(
+            (self.num_envs,), -1, dtype=torch.int64, device=self.device
+        )
+        self.last_lookahead_points = torch.full(
+            (self.num_envs, 2),
+            float("nan"),
+            dtype=torch.float32,
+            device=self.device,
+        )
+        self.last_alpha = torch.full(
+            (self.num_envs,), float("nan"), dtype=torch.float32, device=self.device
+        )
+        self.last_distance_to_path_end = torch.full(
+            (self.num_envs,), float("nan"), dtype=torch.float32, device=self.device
+        )
+        self.last_distance_to_target = torch.full(
+            (self.num_envs,), float("nan"), dtype=torch.float32, device=self.device
+        )
+        self.last_linear_vels = torch.zeros(
+            self.num_envs, dtype=torch.float32, device=self.device
+        )
+        self.last_angular_vels = torch.zeros_like(self.last_linear_vels)
+        self.last_valid_robot = torch.zeros(
+            self.num_envs, dtype=torch.bool, device=self.device
         )
 
-        if target_positions.shape != (env_indices.numel(), 2):
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    def update_paths(self, env_indices, new_paths, target_positions) -> None:
+        env_indices = self._as_env_indices(env_indices)
+        targets = torch.as_tensor(
+            target_positions, dtype=torch.float32, device=self.device
+        )
+        if targets.shape != (env_indices.numel(), 2):
             raise ValueError(
                 "target_positions must have shape "
-                f"[{env_indices.numel()}, 2], got {tuple(target_positions.shape)}"
+                f"({env_indices.numel()}, 2), got {tuple(targets.shape)}"
+            )
+        if len(new_paths) != env_indices.numel():
+            raise ValueError(
+                f"new_paths must contain {env_indices.numel()} paths, "
+                f"got {len(new_paths)}"
             )
 
-        self.target_positions[env_indices] = target_positions
-
-        if isinstance(new_paths, torch.Tensor):
-            if new_paths.shape[0] != env_indices.numel():
-                raise ValueError(
-                    "new_paths first dimension must match env_indices: "
-                    f"{new_paths.shape[0]} != {env_indices.numel()}"
-                )
-            path_rows = [new_paths[i] for i in range(new_paths.shape[0])]
-        else:
-            path_rows = list(new_paths)
-            if len(path_rows) != env_indices.numel():
-                raise ValueError(
-                    "new_paths length must match env_indices: "
-                    f"{len(path_rows)} != {env_indices.numel()}"
-                )
+        self.target_positions[env_indices] = targets
 
         for row, env_id_tensor in enumerate(env_indices):
             env_id = int(env_id_tensor.item())
             path = torch.as_tensor(
-                path_rows[row], dtype=torch.float32, device=self.device
+                new_paths[row], dtype=torch.float32, device=self.device
             )
-            path = self._sanitize_path(path)
-            path = self._validate_path_length(path, self.max_path_length)
+            if path.ndim != 2 or path.shape[1] != 2:
+                raise ValueError(
+                    f"Path for env {env_id} must have shape (N, 2), "
+                    f"got {tuple(path.shape)}"
+                )
+
+            finite_rows = torch.isfinite(path).all(dim=1)
+            first_invalid = torch.where(~finite_rows)[0]
+            length = (
+                int(first_invalid[0].item())
+                if first_invalid.numel() > 0
+                else int(path.shape[0])
+            )
+            if length > self.max_path_length:
+                raise ValueError(
+                    f"Path length {length} exceeds max_path_length "
+                    f"{self.max_path_length}"
+                )
 
             self.paths[env_id].fill_(float("nan"))
-            length = int(path.shape[0])
             if length > 0:
-                self.paths[env_id, :length] = path
-
+                self.paths[env_id, :length] = path[:length]
             self.path_lengths[env_id] = length
-            self.waypoint_indices[env_id] = 0
-            self.finished[env_id] = length == 0
-            self.last_heading_error[env_id] = 0.0
+            self.progress_arclen[env_id] = 0.0
+            self.finished[env_id] = False
+            self._reset_debug_state(torch.tensor([env_id], device=self.device))
 
-    @torch.no_grad()
-    def compute_actions(
-        self,
-        positions: torch.Tensor,
-        orientations: torch.Tensor,
-    ) -> torch.Tensor:
-        """Return one discrete action for every environment.
-
-        ``positions`` must be env-local XY coordinates with shape [num_envs, 2].
-        ``orientations`` must be yaw angles in radians with shape [num_envs].
-        """
+    def compute_controls(self, positions, orientations):
         positions = torch.as_tensor(
             positions, dtype=torch.float32, device=self.device
         )
         orientations = torch.as_tensor(
             orientations, dtype=torch.float32, device=self.device
         ).flatten()
+        self._validate_input_shapes(positions, orientations)
 
-        if positions.shape[0] != self.num_envs or positions.shape[-1] < 2:
-            raise ValueError(
-                f"positions must have shape [{self.num_envs}, 2+], "
-                f"got {tuple(positions.shape)}"
-            )
-        if orientations.shape[0] != self.num_envs:
-            raise ValueError(
-                f"orientations must have shape [{self.num_envs}], "
-                f"got {tuple(orientations.shape)}"
-            )
+        linear_vels = torch.zeros(
+            self.num_envs, dtype=torch.float32, device=self.device
+        )
+        angular_vels = torch.zeros_like(linear_vels)
 
-        positions = positions[:, :2]
+        self._reset_step_debug_state()
 
-        # There is no no-op in Discrete(3). TURN_LEFT is only a safe fallback;
-        # normally actions from inactive envs are not copied into the environment.
-        actions = torch.full(
-            (self.num_envs,),
-            self.TURN_LEFT,
-            dtype=torch.long,
-            device=self.device,
+        valid_robot = self._valid_robot_mask(positions, orientations)
+        self.last_valid_robot.copy_(valid_robot)
+        self._report_invalid_robot_state(
+            positions, orientations, ~valid_robot
         )
 
-        active = (self.path_lengths > 0) & (~self.finished)
-
-        # Advance only after the robot has actually reached the dense waypoint.
-        # The threshold must stay below the 0.25 m forward action. A threshold
-        # of 0.30 m skipped the next graph node before the first movement.
-        for _ in range(self.max_path_length):
-            active_ids = torch.where(active)[0]
-            if active_ids.numel() == 0:
-                break
-
-            indices = self.waypoint_indices[active_ids]
-            points = self.paths[active_ids, indices]
-            distances = torch.linalg.norm(
-                points - positions[active_ids], dim=-1
-            )
-            last_indices = self.path_lengths[active_ids] - 1
-
-            advance = (
-                (distances <= self.waypoint_threshold)
-                & (indices < last_indices)
-            )
-            if not advance.any():
-                break
-
-            self.waypoint_indices[active_ids[advance]] += 1
-
-        active_ids = torch.where(active)[0]
-        if active_ids.numel() > 0:
-            indices = self.waypoint_indices[active_ids]
-            points = self.paths[active_ids, indices]
-            distances = torch.linalg.norm(
-                points - positions[active_ids], dim=-1
-            )
-            last_indices = self.path_lengths[active_ids] - 1
-            at_last = indices >= last_indices
-
-            newly_finished = (
-                at_last & (distances <= self.final_waypoint_threshold)
-            )
-            if newly_finished.any():
-                self.finished[active_ids[newly_finished]] = True
-
-        # Non-finished environments steer toward the current path waypoint.
-        path_follow_ids = torch.where(
-            (self.path_lengths > 0) & (~self.finished)
-        )[0]
-        if path_follow_ids.numel() > 0:
-            waypoint_ids = self.waypoint_indices[path_follow_ids]
-            steering_points = self.paths[path_follow_ids, waypoint_ids]
-            self._write_steering_actions(
-                actions,
-                path_follow_ids,
-                positions,
-                orientations,
-                steering_points,
-            )
-
-        # Once the last path waypoint is reached, rotate toward the actual goal.
-        # The environment's goal_reached() terminates the episode as soon as the
-        # robot is close enough and aligned, so no explicit stop action is needed.
-        final_align_mask = (
+        path_following = (
+            (self.path_lengths >= 2)
+            & (~self.finished)
+            & valid_robot
+        )
+        final_alignment = (
             self.finished
-            & torch.isfinite(self.target_positions).all(dim=-1)
+            & torch.isfinite(self.target_positions).all(dim=1)
+            & valid_robot
         )
-        final_align_ids = torch.where(final_align_mask)[0]
-        if final_align_ids.numel() > 0:
-            self._write_steering_actions(
-                actions,
-                final_align_ids,
-                positions,
-                orientations,
-                self.target_positions[final_align_ids],
+
+        self.last_stage[path_following] = self.PATH_FOLLOWING
+        self.last_stage[final_alignment] = self.FINAL_ALIGNMENT
+
+        self._run_path_following(
+            positions,
+            orientations,
+            path_following,
+            linear_vels,
+            angular_vels,
+        )
+        self._run_final_alignment(
+            positions,
+            orientations,
+            valid_robot,
+            linear_vels,
+            angular_vels,
+        )
+
+        self._sanitize_outputs(linear_vels, angular_vels)
+        self.last_linear_vels.copy_(linear_vels)
+        self.last_angular_vels.copy_(angular_vels)
+
+        self._control_step += 1
+        if self.debug and self._control_step % self.debug_every_n_steps == 0:
+            self.debug_print(
+                positions=positions,
+                orientations=orientations,
+                env_indices=self.debug_env_indices,
+                precision=self.debug_precision,
             )
 
-        return actions
+        return linear_vels, angular_vels
 
-    def _write_steering_actions(
+    def debug_print(
         self,
-        actions: torch.Tensor,
-        env_ids: torch.Tensor,
+        positions=None,
+        orientations=None,
+        env_indices: Iterable[int] | torch.Tensor | None = None,
+        precision: int | None = None,
+    ) -> None:
+        """Print complete controller state.
+
+        By default all environments are printed. The path is printed through
+        the first NaN row, including that row.
+        """
+        precision = self.debug_precision if precision is None else int(precision)
+        ids = (
+            torch.arange(self.num_envs, device=self.device)
+            if env_indices is None
+            else self._as_env_indices(env_indices)
+        )
+
+        pos = (
+            None
+            if positions is None
+            else torch.as_tensor(positions).detach().cpu()
+        )
+        yaw = (
+            None
+            if orientations is None
+            else torch.as_tensor(orientations).flatten().detach().cpu()
+        )
+
+        paths = self.paths.detach().cpu()
+        lengths = self.path_lengths.detach().cpu()
+        targets = self.target_positions.detach().cpu()
+        finished = self.finished.detach().cpu()
+        progress = self.progress_arclen.detach().cpu()
+        stage = self.last_stage.detach().cpu()
+        closest_seg = self.last_closest_segment.detach().cpu()
+        closest_proj = self.last_closest_projection.detach().cpu()
+        closest_dist = self.last_closest_distance.detach().cpu()
+        closest_s = self.last_closest_arclen.detach().cpu()
+        target_s = self.last_target_arclen.detach().cpu()
+        total_s = self.last_total_arclen.detach().cpu()
+        look_seg = self.last_lookahead_segment.detach().cpu()
+        look = self.last_lookahead_points.detach().cpu()
+        alpha = self.last_alpha.detach().cpu()
+        end_dist = self.last_distance_to_path_end.detach().cpu()
+        target_dist = self.last_distance_to_target.detach().cpu()
+        linear = self.last_linear_vels.detach().cpu()
+        angular = self.last_angular_vels.detach().cpu()
+        valid_robot = self.last_valid_robot.detach().cpu()
+
+        def scalar(value: torch.Tensor) -> str:
+            number = float(value.item())
+            return (
+                f"{number:.{precision}f}"
+                if math.isfinite(number)
+                else "nan"
+            )
+
+        def point(value: torch.Tensor) -> str:
+            if value.numel() < 2 or not torch.isfinite(value[:2]).all():
+                return "(nan, nan)"
+            return (
+                f"({value[0]:.{precision}f}, "
+                f"{value[1]:.{precision}f})"
+            )
+
+        print(
+            f"[PP DEBUG step={self._control_step}] "
+            f"lookahead={self.lookahead_distance:.{precision}f} "
+            f"base_v={self.base_linear_velocity:.{precision}f}"
+        )
+
+        for env_id_tensor in ids.detach().cpu():
+            env_id = int(env_id_tensor.item())
+            length = int(lengths[env_id].item())
+            display_end = min(length + 1, self.max_path_length)
+            shown_path = paths[env_id, :display_end]
+            path_text = " -> ".join(point(p) for p in shown_path)
+            if not path_text:
+                path_text = "(nan, nan)"
+
+            stage_name = self.STAGE_NAMES[int(stage[env_id].item())]
+            pos_text = "-" if pos is None else point(pos[env_id, :2])
+            yaw_text = "-" if yaw is None else scalar(yaw[env_id])
+
+            closest_idx = int(closest_seg[env_id].item())
+            closest_segment_text = self._debug_segment_text(
+                paths, length, env_id, closest_idx, point
+            )
+            look_idx = int(look_seg[env_id].item())
+            look_segment_text = self._debug_segment_text(
+                paths, length, env_id, look_idx, point
+            )
+
+            print(
+                f"[PP env={env_id:03d}] "
+                f"stage={stage_name:<15} valid_robot={bool(valid_robot[env_id])} "
+                f"finished={bool(finished[env_id])}\n"
+                f"  robot: pos={pos_text} yaw={yaw_text}\n"
+                f"  closest: seg={closest_segment_text} "
+                f"proj={scalar(closest_proj[env_id])} "
+                f"dist={scalar(closest_dist[env_id])} "
+                f"closest_s={scalar(closest_s[env_id])}\n"
+                f"  progress: s={scalar(progress[env_id])} "
+                f"target_s={scalar(target_s[env_id])} "
+                f"total_s={scalar(total_s[env_id])}\n"
+                f"  lookahead: point={point(look[env_id])} "
+                f"seg={look_segment_text} alpha={scalar(alpha[env_id])}\n"
+                f"  finish: path_end_dist={scalar(end_dist[env_id])} "
+                f"target={point(targets[env_id])} "
+                f"target_dist={scalar(target_dist[env_id])}\n"
+                f"  command: linear={scalar(linear[env_id])} "
+                f"angular={scalar(angular[env_id])}\n"
+                f"  path[{length}]: {path_text}"
+            )
+
+    # ------------------------------------------------------------------
+    # Pure Pursuit pipeline
+    # ------------------------------------------------------------------
+
+    def _run_path_following(
+        self,
         positions: torch.Tensor,
         orientations: torch.Tensor,
-        steering_points: torch.Tensor,
+        active_mask: torch.Tensor,
+        linear_vels: torch.Tensor,
+        angular_vels: torch.Tensor,
     ) -> None:
-        delta = steering_points - positions[env_ids]
-        desired_yaw = torch.atan2(delta[:, 1], delta[:, 0])
-        error = self._wrap_to_pi(desired_yaw - orientations[env_ids])
-        self.last_heading_error[env_ids] = error
+        if not active_mask.any():
+            return
 
-        aligned = error.abs() <= self.heading_threshold_rad
-        turn_left = error > self.heading_threshold_rad
-        turn_right = error < -self.heading_threshold_rad
+        env_ids = torch.where(active_mask)[0]
+        pos = positions[env_ids, :2]
+        yaw = orientations[env_ids]
+        paths = self.paths[env_ids]
+        path_lengths = self.path_lengths[env_ids]
 
-        actions[env_ids[aligned]] = self.MOVE_FORWARD
-        actions[env_ids[turn_left]] = self.TURN_LEFT
-        actions[env_ids[turn_right]] = self.TURN_RIGHT
+        geometry = self._build_path_geometry(paths, path_lengths)
+        projection = self._project_onto_path(pos, geometry)
+
+        valid_geometry = projection["valid"]
+        if (~valid_geometry).any():
+            bad_ids = env_ids[~valid_geometry]
+            print(
+                "[PURE PURSUIT ERROR] Cannot project robot onto path: "
+                f"envs={bad_ids.tolist()}. Commands remain zero."
+            )
+
+        self.last_closest_segment[env_ids] = projection["segment"]
+        self.last_closest_projection[env_ids] = projection["fraction"]
+        self.last_closest_distance[env_ids] = projection["distance"]
+        self.last_closest_arclen[env_ids] = projection["arclen"]
+
+        progress = self._update_monotonic_progress(
+            env_ids,
+            projection["arclen"],
+            valid_geometry,
+        )
+
+        target_arclen = progress + self.lookahead_distance
+        total_arclen = geometry["total_arclen"]
+        self.last_target_arclen[env_ids] = target_arclen
+        self.last_total_arclen[env_ids] = total_arclen
+
+        lookahead = self._find_lookahead_points(
+            paths,
+            path_lengths,
+            geometry,
+            target_arclen,
+            valid_geometry,
+        )
+        self.last_lookahead_points[env_ids] = lookahead["points"]
+        self.last_lookahead_segment[env_ids] = lookahead["segment"]
+
+        commands = self._compute_pure_pursuit_commands(
+            pos,
+            yaw,
+            lookahead["points"],
+            lookahead["valid"],
+        )
+        self.last_alpha[env_ids] = commands["alpha"]
+
+        linear_vels[env_ids] = commands["linear"]
+        angular_vels[env_ids] = commands["angular"]
+
+        self._mark_path_completion(
+            env_ids,
+            pos,
+            paths,
+            path_lengths,
+            linear_vels,
+            angular_vels,
+        )
+
+    def _build_path_geometry(
+        self,
+        paths: torch.Tensor,
+        path_lengths: torch.Tensor,
+    ) -> dict[str, torch.Tensor]:
+        batch_size = paths.shape[0]
+        max_segments = self.max_path_length - 1
+
+        starts = paths[:, :-1, :]
+        ends = paths[:, 1:, :]
+        vectors = ends - starts
+        lengths = torch.linalg.norm(vectors, dim=-1)
+
+        segment_indices = torch.arange(
+            max_segments, device=self.device
+        ).unsqueeze(0).expand(batch_size, max_segments)
+        valid = segment_indices < (path_lengths - 1).unsqueeze(1)
+        valid &= torch.isfinite(starts).all(dim=-1)
+        valid &= torch.isfinite(ends).all(dim=-1)
+        valid &= torch.isfinite(lengths)
+        valid &= lengths > self.segment_length_epsilon
+
+        safe_starts = torch.where(
+            valid.unsqueeze(-1), starts, torch.zeros_like(starts)
+        )
+        safe_vectors = torch.where(
+            valid.unsqueeze(-1), vectors, torch.zeros_like(vectors)
+        )
+        safe_lengths = torch.where(valid, lengths, torch.zeros_like(lengths))
+
+        cumulative = torch.cat(
+            [
+                torch.zeros(batch_size, 1, device=self.device),
+                safe_lengths,
+            ],
+            dim=1,
+        )
+        cumulative = torch.cumsum(cumulative, dim=1)
+        rows = torch.arange(batch_size, device=self.device)
+        total_arclen = cumulative[
+            rows,
+            (path_lengths - 1).clamp(min=0, max=max_segments),
+        ]
+
+        return {
+            "starts": safe_starts,
+            "vectors": safe_vectors,
+            "lengths": safe_lengths,
+            "valid": valid,
+            "cumulative": cumulative,
+            "total_arclen": total_arclen,
+        }
+
+    def _project_onto_path(
+        self,
+        positions: torch.Tensor,
+        geometry: dict[str, torch.Tensor],
+    ) -> dict[str, torch.Tensor]:
+        starts = geometry["starts"]
+        vectors = geometry["vectors"]
+        lengths = geometry["lengths"]
+        segment_valid = geometry["valid"]
+        cumulative = geometry["cumulative"]
+
+        to_starts = positions.unsqueeze(1) - starts
+        raw_fraction = torch.sum(to_starts * vectors, dim=-1) / (
+            lengths.square() + self.numeric_epsilon
+        )
+        fraction = raw_fraction.clamp(0.0, 1.0)
+        closest_points = starts + vectors * fraction.unsqueeze(-1)
+        distances = torch.linalg.norm(
+            positions.unsqueeze(1) - closest_points,
+            dim=-1,
+        )
+        distances = distances.masked_fill(~segment_valid, float("inf"))
+
+        min_distance, segment = torch.min(distances, dim=1)
+        rows = torch.arange(positions.shape[0], device=self.device)
+        min_fraction = fraction[rows, segment]
+        min_length = lengths[rows, segment]
+        arclen = cumulative[rows, segment] + min_fraction * min_length
+
+        valid = (
+            segment_valid.any(dim=1)
+            & torch.isfinite(min_distance)
+            & torch.isfinite(arclen)
+        )
+
+        return {
+            "segment": segment,
+            "fraction": min_fraction,
+            "distance": min_distance,
+            "arclen": arclen,
+            "valid": valid,
+        }
+
+    def _update_monotonic_progress(
+        self,
+        env_ids: torch.Tensor,
+        closest_arclen: torch.Tensor,
+        valid: torch.Tensor,
+    ) -> torch.Tensor:
+        previous = self.progress_arclen[env_ids].clone()
+        previous_finite = torch.isfinite(previous)
+        if (~previous_finite).any():
+            bad_ids = env_ids[~previous_finite]
+            print(
+                "[PURE PURSUIT ERROR] Invalid progress_arclen: "
+                f"envs={bad_ids.tolist()}. Progress reset to zero."
+            )
+            previous[~previous_finite] = 0.0
+            self.progress_arclen[bad_ids] = 0.0
+
+        usable = valid & previous_finite
+        updated = previous.clone()
+        updated[usable] = torch.maximum(
+            previous[usable], closest_arclen[usable]
+        )
+        self.progress_arclen[env_ids[usable]] = updated[usable]
+        return updated
+
+    def _find_lookahead_points(
+        self,
+        paths: torch.Tensor,
+        path_lengths: torch.Tensor,
+        geometry: dict[str, torch.Tensor],
+        target_arclen: torch.Tensor,
+        valid_geometry: torch.Tensor,
+    ) -> dict[str, torch.Tensor]:
+        batch_size = paths.shape[0]
+        max_segments = self.max_path_length - 1
+        rows = torch.arange(batch_size, device=self.device)
+        total_arclen = geometry["total_arclen"]
+        cumulative = geometry["cumulative"]
+        lengths = geometry["lengths"]
+        starts = geometry["starts"]
+        vectors = geometry["vectors"]
+
+        last_point_indices = (path_lengths - 1).clamp(
+            min=0, max=self.max_path_length - 1
+        )
+        last_points = paths[rows, last_point_indices]
+
+        points = torch.full(
+            (batch_size, 2),
+            float("nan"),
+            dtype=torch.float32,
+            device=self.device,
+        )
+        segments = torch.full(
+            (batch_size,), -1, dtype=torch.int64, device=self.device
+        )
+
+        beyond = valid_geometry & (target_arclen >= total_arclen)
+        points[beyond] = last_points[beyond]
+        segments[beyond] = (path_lengths[beyond] - 2).clamp(
+            min=0, max=max_segments - 1
+        )
+
+        inside = valid_geometry & (~beyond)
+        if inside.any():
+            inside_target = target_arclen[inside]
+            inside_cumulative = cumulative[inside]
+            target_segments = torch.searchsorted(
+                inside_cumulative,
+                inside_target.unsqueeze(1),
+                right=False,
+            ).squeeze(1) - 1
+            target_segments = target_segments.clamp(
+                min=0, max=max_segments - 1
+            )
+
+            inside_rows = torch.arange(
+                target_segments.shape[0], device=self.device
+            )
+            segment_start_s = inside_cumulative[
+                inside_rows, target_segments
+            ]
+            segment_lengths = lengths[inside, target_segments]
+            fractions = (
+                inside_target - segment_start_s
+            ) / (segment_lengths + self.numeric_epsilon)
+            fractions = fractions.clamp(0.0, 1.0)
+
+            points[inside] = (
+                starts[inside, target_segments]
+                + vectors[inside, target_segments]
+                * fractions.unsqueeze(1)
+            )
+            segments[inside] = target_segments
+
+        distances = torch.linalg.norm(points - paths[:, 0, :], dim=1)
+        # The actual robot-to-lookahead distance is checked in the command
+        # method. Here only finite geometry is asserted.
+        valid = (
+            valid_geometry
+            & torch.isfinite(points).all(dim=1)
+            & (segments >= 0)
+            & torch.isfinite(distances)
+        )
+
+        return {
+            "points": points,
+            "segment": segments,
+            "valid": valid,
+        }
+
+    def _compute_pure_pursuit_commands(
+        self,
+        positions: torch.Tensor,
+        orientations: torch.Tensor,
+        lookahead_points: torch.Tensor,
+        valid_lookahead: torch.Tensor,
+    ) -> dict[str, torch.Tensor]:
+        batch_size = positions.shape[0]
+        linear = torch.zeros(
+            batch_size, dtype=torch.float32, device=self.device
+        )
+        angular = torch.zeros_like(linear)
+        alpha_all = torch.full_like(linear, float("nan"))
+
+        robot_to_lookahead = lookahead_points - positions
+        point_distance = torch.linalg.norm(robot_to_lookahead, dim=1)
+        valid = (
+            valid_lookahead
+            & torch.isfinite(point_distance)
+            & (point_distance < self.max_next_point_distance)
+        )
+
+        if valid.any():
+            rows = torch.where(valid)[0]
+            vectors = robot_to_lookahead[rows]
+            target_angles = torch.atan2(vectors[:, 1], vectors[:, 0])
+            alpha = self._wrap_angle(target_angles - orientations[rows])
+            alpha_all[rows] = alpha
+
+            curvature = 2.0 * torch.sin(alpha) / (
+                self.lookahead_distance + self.numeric_epsilon
+            )
+            angular_valid = curvature * self.base_linear_velocity
+            angular_valid = angular_valid.clamp(
+                -self.max_angular_velocity,
+                self.max_angular_velocity,
+            )
+            linear_valid = self.base_linear_velocity * (
+                1.0
+                - angular_valid.abs()
+                / (self.max_angular_velocity + self.numeric_epsilon)
+            )
+            linear_valid = linear_valid.clamp(min=0.0)
+
+            low_linear = (
+                linear_valid < self.low_linear_velocity_threshold
+            )
+            if low_linear.any():
+                signs = torch.sign(angular_valid[low_linear])
+                signs[signs == 0] = 1.0
+                angular_valid[low_linear] = (
+                    signs * self.sharp_turn_angular_velocity
+                )
+
+            linear[rows] = linear_valid
+            angular[rows] = angular_valid
+
+        return {
+            "linear": linear,
+            "angular": angular,
+            "alpha": alpha_all,
+        }
+
+    def _mark_path_completion(
+        self,
+        env_ids: torch.Tensor,
+        positions: torch.Tensor,
+        paths: torch.Tensor,
+        path_lengths: torch.Tensor,
+        linear_vels: torch.Tensor,
+        angular_vels: torch.Tensor,
+    ) -> None:
+        rows = torch.arange(env_ids.numel(), device=self.device)
+        last_indices = (path_lengths - 1).clamp(
+            min=0, max=self.max_path_length - 1
+        )
+        last_points = paths[rows, last_indices]
+        distance_to_end = torch.linalg.norm(
+            positions - last_points, dim=1
+        )
+        self.last_distance_to_path_end[env_ids] = distance_to_end
+
+        reached = (
+            torch.isfinite(last_points).all(dim=1)
+            & torch.isfinite(distance_to_end)
+            & (distance_to_end < self.arrival_threshold)
+        )
+        if reached.any():
+            reached_ids = env_ids[reached]
+            self.finished[reached_ids] = True
+            self.last_stage[reached_ids] = self.FINAL_ALIGNMENT
+            linear_vels[reached_ids] = 0.0
+            angular_vels[reached_ids] = 0.0
+
+    def _run_final_alignment(
+        self,
+        positions: torch.Tensor,
+        orientations: torch.Tensor,
+        valid_robot: torch.Tensor,
+        linear_vels: torch.Tensor,
+        angular_vels: torch.Tensor,
+    ) -> None:
+        mask = (
+            self.finished
+            & torch.isfinite(self.target_positions).all(dim=1)
+            & valid_robot
+        )
+        ids = torch.where(mask)[0]
+        if ids.numel() == 0:
+            return
+
+        vectors = self.target_positions[ids] - positions[ids, :2]
+        distances = torch.linalg.norm(vectors, dim=1)
+        desired = torch.atan2(vectors[:, 1], vectors[:, 0])
+        alpha = self._wrap_angle(desired - orientations[ids])
+
+        valid = (
+            torch.isfinite(distances)
+            & (distances < self.max_next_point_distance)
+            & torch.isfinite(alpha)
+        )
+        self.last_distance_to_target[ids] = distances
+        self.last_alpha[ids] = alpha
+        self.last_stage[ids] = self.FINAL_ALIGNMENT
+
+        commands = torch.zeros_like(alpha)
+        signs = torch.sign(alpha[valid])
+        signs[signs == 0] = 1.0
+        commands[valid] = (
+            signs * self.final_alignment_angular_velocity
+        ).clamp(
+            -self.max_angular_velocity,
+            self.max_angular_velocity,
+        )
+
+        aligned = valid & (alpha.abs() < self.final_alignment_threshold)
+        commands[aligned] = 0.0
+
+        linear_vels[ids] = 0.0
+        angular_vels[ids] = commands
+
+    # ------------------------------------------------------------------
+    # Validation and diagnostics
+    # ------------------------------------------------------------------
+
+    def _reset_step_debug_state(self) -> None:
+        self.last_stage.fill_(self.IDLE)
+        self.last_closest_segment.fill_(-1)
+        self.last_closest_projection.fill_(float("nan"))
+        self.last_closest_distance.fill_(float("nan"))
+        self.last_closest_arclen.fill_(float("nan"))
+        self.last_target_arclen.fill_(float("nan"))
+        self.last_total_arclen.fill_(float("nan"))
+        self.last_lookahead_segment.fill_(-1)
+        self.last_lookahead_points.fill_(float("nan"))
+        self.last_alpha.fill_(float("nan"))
+        self.last_distance_to_path_end.fill_(float("nan"))
+        self.last_distance_to_target.fill_(float("nan"))
+
+    def _reset_debug_state(self, env_ids: torch.Tensor) -> None:
+        self.last_stage[env_ids] = self.IDLE
+        self.last_closest_segment[env_ids] = -1
+        self.last_closest_projection[env_ids] = float("nan")
+        self.last_closest_distance[env_ids] = float("nan")
+        self.last_closest_arclen[env_ids] = float("nan")
+        self.last_target_arclen[env_ids] = float("nan")
+        self.last_total_arclen[env_ids] = float("nan")
+        self.last_lookahead_segment[env_ids] = -1
+        self.last_lookahead_points[env_ids] = float("nan")
+        self.last_alpha[env_ids] = float("nan")
+        self.last_distance_to_path_end[env_ids] = float("nan")
+        self.last_distance_to_target[env_ids] = float("nan")
+        self.last_linear_vels[env_ids] = 0.0
+        self.last_angular_vels[env_ids] = 0.0
+
+    @staticmethod
+    def _debug_segment_text(
+        paths: torch.Tensor,
+        path_length: int,
+        env_id: int,
+        segment_idx: int,
+        point_formatter,
+    ) -> str:
+        if segment_idx < 0 or segment_idx >= path_length - 1:
+            return "-"
+        return (
+            f"{segment_idx}:"
+            f"{point_formatter(paths[env_id, segment_idx])}→"
+            f"{point_formatter(paths[env_id, segment_idx + 1])}"
+        )
+
+    def _valid_robot_mask(
+        self,
+        positions: torch.Tensor,
+        orientations: torch.Tensor,
+    ) -> torch.Tensor:
+        return (
+            torch.isfinite(positions[:, :2]).all(dim=1)
+            & (
+                positions[:, :2].abs() <= self.invalid_position_limit
+            ).all(dim=1)
+            & torch.isfinite(orientations)
+        )
+
+    def _report_invalid_robot_state(
+        self,
+        positions: torch.Tensor,
+        orientations: torch.Tensor,
+        invalid_mask: torch.Tensor,
+    ) -> None:
+        if not invalid_mask.any():
+            return
+        ids = torch.where(invalid_mask)[0]
+        print(
+            "[PURE PURSUIT ERROR] Invalid robot state: "
+            f"envs={ids.tolist()}, "
+            f"positions={positions[ids, :2].detach().cpu().tolist()}, "
+            f"yaws={orientations[ids].detach().cpu().tolist()}. "
+            "Commands are zero."
+        )
+
+    def _sanitize_outputs(
+        self,
+        linear_vels: torch.Tensor,
+        angular_vels: torch.Tensor,
+    ) -> None:
+        invalid = (
+            ~torch.isfinite(linear_vels)
+            | ~torch.isfinite(angular_vels)
+        )
+        if invalid.any():
+            ids = torch.where(invalid)[0]
+            print(
+                "[PURE PURSUIT ERROR] NaN/Inf command: "
+                f"envs={ids.tolist()}. Commands replaced with zero."
+            )
+            linear_vels[invalid] = 0.0
+            angular_vels[invalid] = 0.0
+            self.progress_arclen[ids] = 0.0
+
+    def _validate_input_shapes(
+        self,
+        positions: torch.Tensor,
+        orientations: torch.Tensor,
+    ) -> None:
+        if (
+            positions.ndim != 2
+            or positions.shape[0] != self.num_envs
+            or positions.shape[1] < 2
+        ):
+            raise ValueError(
+                "positions must have shape (num_envs, >=2), got "
+                f"{tuple(positions.shape)}"
+            )
+        if orientations.shape != (self.num_envs,):
+            raise ValueError(
+                "orientations must contain one yaw per environment, got "
+                f"{tuple(orientations.shape)}"
+            )
+
+    def _validate_config(self) -> None:
+        positive = {
+            "num_envs": self.num_envs,
+            "max_path_length": self.max_path_length,
+            "lookahead_distance": self.lookahead_distance,
+            "base_linear_velocity": self.base_linear_velocity,
+            "max_angular_velocity": self.max_angular_velocity,
+            "arrival_threshold": self.arrival_threshold,
+            "sharp_turn_angular_velocity": self.sharp_turn_angular_velocity,
+            "final_alignment_threshold": self.final_alignment_threshold,
+            "final_alignment_angular_velocity": (
+                self.final_alignment_angular_velocity
+            ),
+            "segment_length_epsilon": self.segment_length_epsilon,
+            "numeric_epsilon": self.numeric_epsilon,
+            "invalid_position_limit": self.invalid_position_limit,
+            "max_next_point_distance": self.max_next_point_distance,
+            "debug_every_n_steps": self.debug_every_n_steps,
+        }
+        for name, value in positive.items():
+            if value <= 0:
+                raise ValueError(f"{name} must be > 0, got {value}")
+
+        if self.max_path_length < 2:
+            raise ValueError("max_path_length must be >= 2")
+        if self.low_linear_velocity_threshold < 0:
+            raise ValueError(
+                "low_linear_velocity_threshold must be >= 0"
+            )
+        if self.debug_precision < 0:
+            raise ValueError("debug_precision must be >= 0")
+        if self.debug_env_indices is not None:
+            invalid = [
+                i
+                for i in self.debug_env_indices
+                if i < 0 or i >= self.num_envs
+            ]
+            if invalid:
+                raise ValueError(
+                    f"debug_env_indices out of range: {invalid}"
+                )
+
+    def _as_env_indices(self, env_indices) -> torch.Tensor:
+        if isinstance(env_indices, torch.Tensor):
+            return env_indices.to(
+                device=self.device, dtype=torch.int64
+            ).flatten()
+        return torch.as_tensor(
+            env_indices, dtype=torch.int64, device=self.device
+        ).flatten()
+
+    @staticmethod
+    def _wrap_angle(angle: torch.Tensor) -> torch.Tensor:
+        return (angle + math.pi) % (2.0 * math.pi) - math.pi
